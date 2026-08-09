@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -27,9 +29,5 @@
     "tailwindcss": "^4.3.3",
     "vite": "^8.1.1"
   },
-  "homepage": "https://venushoon.github.io/headline-news",
-  "scripts": {
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
-  }
+  "homepage": "https://venushoon.github.io/headline-news"
 }
