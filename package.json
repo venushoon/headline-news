@@ -21,9 +21,15 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.5.4",
+    "gh-pages": "^6.3.0",
     "oxlint": "^1.71.0",
     "postcss": "^8.5.22",
     "tailwindcss": "^4.3.3",
     "vite": "^8.1.1"
+  },
+  "homepage": "https://venushoon.github.io/headline-news",
+  "scripts": {
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
   }
 }
