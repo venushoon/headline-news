@@ -176,7 +176,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f5f0] text-gray-900 p-4 md:p-8 relative">
+    <div className="min-h-screen bg-[#f7f5f0] text-gray-900 p-2 sm:p-4 md:p-8 relative">
       <style>{`
         .news-typography h2, .news-typography blockquote, .news-typography p {
           font-family: 'Nanum Myeongjo', 'Batang', serif;
@@ -277,7 +277,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="max-w-4xl mx-auto bg-white p-6 md:p-12 shadow-sm border border-gray-300">
+      <div className="max-w-4xl mx-auto bg-white p-4 sm:p-6 md:p-12 shadow-sm border border-gray-300">
 
         {/* 웹 화면 전용 헤더 */}
         <header className="border-b-2 border-gray-800 pb-6 mb-8 hide-on-print">
@@ -300,7 +300,7 @@ export default function App() {
           </div>
 
           <div className="text-center my-6">
-            <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight" style={{ fontFamily: "'Nanum Myeongjo', 'Batang', serif", whiteSpace: 'nowrap' }}>
+            <h1 className="text-2xl sm:text-4xl md:text-6xl font-extrabold tracking-tight whitespace-nowrap" style={{ fontFamily: "'Nanum Myeongjo', 'Batang', serif" }}>
               어린이 헤드라인 뉴스
             </h1>
             <p className="text-xs md:text-sm text-gray-500 mt-2 font-sans">
@@ -308,8 +308,8 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex flex-wrap justify-between items-center gap-3 mt-6 pt-4 border-t border-gray-200 font-sans">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col md:flex-row md:flex-wrap md:justify-between md:items-center gap-3 mt-6 pt-4 border-t border-gray-200 font-sans">
+            <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
               <button onClick={() => handleDateChange(-1)} className="px-2.5 py-1 bg-gray-100 border border-gray-300 rounded text-xs hover:bg-gray-200 cursor-pointer">◀ 어제</button>
               <span className="font-bold text-sm px-1">{currentDate} ({getDayOfWeek(currentDate)})</span>
 
@@ -328,7 +328,7 @@ export default function App() {
               </button>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center justify-center md:justify-end gap-3 md:gap-4 flex-wrap">
               <div className="flex items-center gap-1.5 text-xs text-gray-600">
                 <span>가</span>
                 <input 
@@ -337,7 +337,7 @@ export default function App() {
                   max="22" 
                   value={fontSize} 
                   onChange={(e) => setFontSize(Number(e.target.value))}
-                  className="w-20 accent-gray-800 cursor-pointer"
+                  className="w-16 sm:w-20 accent-gray-800 cursor-pointer"
                 />
                 <span>가</span>
               </div>
@@ -347,7 +347,7 @@ export default function App() {
                 placeholder="🔍 기사 검색..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="border border-gray-300 rounded px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-800 w-32 md:w-40"
+                className="border border-gray-300 rounded px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-800 w-28 sm:w-32 md:w-40"
               />
 
               <button 
@@ -422,12 +422,12 @@ export default function App() {
           ) : (
             <>
               {/* 기사 탭 네비게이션 (인쇄 시 숨김) */}
-              <div className="flex space-x-2 mb-6 border-b-2 border-gray-300 pb-0 hide-on-print font-sans">
+              <div className="flex space-x-2 mb-6 border-b-2 border-gray-300 pb-0 hide-on-print font-sans overflow-x-auto whitespace-nowrap">
                 {filteredArticles.map((art, idx) => (
                   <button
                     key={idx}
                     onClick={() => setCurrentArticleIndex(idx)}
-                    className={`px-5 py-2 text-sm font-bold rounded-t-lg transition-all ${
+                    className={`px-5 py-2 text-sm font-bold rounded-t-lg transition-all shrink-0 ${
                       currentArticleIndex === idx
                         ? 'bg-gray-800 text-white transform translate-y-[2px]'
                         : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
