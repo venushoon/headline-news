@@ -65,6 +65,9 @@ export default function App() {
   const [isDictModalOpen, setIsDictModalOpen] = useState(false);
   const [dictQuery, setDictQuery] = useState('');
 
+  // 아카이브 월별 그룹 펼침/접힘 상태 (key: "YYYY-MM")
+  const [openMonths, setOpenMonths] = useState({});
+
   useEffect(() => {
     if (initError) return;
     const dateStr = getTodayString();
@@ -106,7 +109,7 @@ export default function App() {
       const q = query(
         collection(db, 'daily_briefings'),
         orderBy('__name__', 'desc'), // 문서 ID(날짜) 기준으로 최신순 정렬
-        limit(30)                    // 무조건 최신 30개만 다운로드하여 읽기 비용 제한
+        limit(180)                   // 월별 아코디언 대비 약 6개월치 확보 (읽기 비용은 여전히 제한적)
       );
 
       const querySnapshot = await getDocs(q);
@@ -116,6 +119,10 @@ export default function App() {
       });
 
       setArchiveList(list);
+      // 가장 최근 월만 펼친 상태로 시작
+      if (list.length > 0) {
+        setOpenMonths({ [list[0].date.slice(0, 7)]: true });
+      }
       setViewMode('archive');
     } catch (error) {
       console.error("아카이브 로드 실패:", error);
@@ -144,6 +151,28 @@ export default function App() {
     if (!dateStr) return '';
     const d = parseLocalDate(dateStr);
     return `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}. ${getDayOfWeek(dateStr)}`;
+  };
+
+  // 아카이브 리스트를 "YYYY-MM" 기준으로 묶어 최신순 배열로 반환
+  const groupArchiveByMonth = (list) => {
+    const groups = {};
+    list.forEach((item) => {
+      const monthKey = item.date.slice(0, 7);
+      if (!groups[monthKey]) groups[monthKey] = [];
+      groups[monthKey].push(item);
+    });
+    return Object.keys(groups)
+      .sort((a, b) => (a < b ? 1 : -1))
+      .map((monthKey) => ({ monthKey, items: groups[monthKey] }));
+  };
+
+  const getMonthLabel = (monthKey) => {
+    const [y, m] = monthKey.split('-').map(Number);
+    return `${y}년 ${m}월`;
+  };
+
+  const toggleMonth = (monthKey) => {
+    setOpenMonths((prev) => ({ ...prev, [monthKey]: !prev[monthKey] }));
   };
 
   const filteredArticles = articles.filter(art => {
@@ -393,25 +422,47 @@ export default function App() {
               {archiveList.length === 0 ? (
                 <p className="text-gray-500 font-sans">저장된 기사가 없습니다.</p>
               ) : (
-                <div className="space-y-4 font-sans">
-                  {archiveList.map((item) => (
-                    <div key={item.date} className="p-4 border border-gray-200 rounded hover:bg-gray-50 flex justify-between items-center">
-                      <div>
-                        <span className="font-bold text-lg">{item.date} ({getDayOfWeek(item.date)})</span>
-                        <p className="text-sm text-gray-600 mt-1">등록된 기사 수: {item.articles.length}개</p>
+                <div className="space-y-3 font-sans">
+                  {groupArchiveByMonth(archiveList).map(({ monthKey, items }) => {
+                    const isOpen = !!openMonths[monthKey];
+                    return (
+                      <div key={monthKey} className="border border-gray-200 rounded overflow-hidden">
+                        <button
+                          onClick={() => toggleMonth(monthKey)}
+                          className="w-full flex justify-between items-center px-4 py-3 bg-gray-50 hover:bg-gray-100 cursor-pointer"
+                        >
+                          <span className="font-bold text-base md:text-lg">
+                            {getMonthLabel(monthKey)}
+                            <span className="text-gray-400 font-normal text-xs md:text-sm ml-2">({items.length}일치)</span>
+                          </span>
+                          <span className={`text-gray-500 text-sm transition-transform ${isOpen ? 'rotate-180' : ''}`}>▼</span>
+                        </button>
+
+                        {isOpen && (
+                          <div className="divide-y divide-gray-100">
+                            {items.map((item) => (
+                              <div key={item.date} className="p-4 hover:bg-gray-50 flex justify-between items-center gap-2">
+                                <div>
+                                  <span className="font-bold text-sm md:text-base">{item.date} ({getDayOfWeek(item.date)})</span>
+                                  <p className="text-xs md:text-sm text-gray-600 mt-1">등록된 기사 수: {item.articles.length}개</p>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setCurrentDate(item.date);
+                                    setArticles(item.articles);
+                                    setViewMode('today');
+                                  }}
+                                  className="shrink-0 px-3 py-1.5 bg-gray-800 text-white text-xs rounded hover:bg-gray-700 cursor-pointer"
+                                >
+                                  보기
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <button 
-                        onClick={() => {
-                          setCurrentDate(item.date);
-                          setArticles(item.articles);
-                          setViewMode('today');
-                        }}
-                        className="px-3 py-1.5 bg-gray-800 text-white text-xs rounded hover:bg-gray-700 cursor-pointer"
-                      >
-                        보기
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
