@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import datetime
 import pytz
@@ -42,6 +43,43 @@ if not firebase_admin._apps:
         exit(1)
 
 db = firestore.client(database_id="headline-news-d6a13")
+
+# ==========================================
+# 1-1. 최신 Flash-Lite 모델 자동 감지
+# ==========================================
+def get_latest_lite_model(client):
+    """
+    사용 가능한 Gemini 모델 중 'flash-lite' 계열의 최신(가장 높은 버전) 모델을 자동으로 찾아 반환.
+    예: gemini-3.5-flash-lite, gemini-3.6-flash-lite 등이 새로 나와도 코드 수정 없이 자동 대응.
+    조회 실패 시 안전한 기본값으로 폴백.
+    """
+    fallback = "gemini-3.5-flash-lite"
+    try:
+        candidates = []
+        for m in client.models.list():
+            name = m.name.replace("models/", "")
+            # "flash-lite"가 포함된 모델만 (무료/저비용 계열), preview 버전은 제외
+            if "flash-lite" in name and "preview" not in name:
+                match = re.search(r"gemini-(\d+\.\d+)-flash-lite", name)
+                if match:
+                    version = float(match.group(1))
+                    candidates.append((version, name))
+
+        if candidates:
+            candidates.sort(reverse=True)  # 버전 높은 순 정렬
+            latest_version, latest_name = candidates[0]
+            print(f"✅ 최신 Flash-Lite 모델 감지: {latest_name}")
+            return latest_name
+        else:
+            print(f"⚠️ Flash-Lite 계열 모델을 찾지 못해 기본값 사용: {fallback}")
+            return fallback
+
+    except Exception as e:
+        print(f"⚠️ 모델 목록 조회 실패, 기본값 사용: {fallback} ({e})")
+        return fallback
+
+# 스크립트 시작 시 1회만 조회 (매번 API 호출하면 비효율)
+SELECTED_MODEL = get_latest_lite_model(client)
 
 # ==========================================
 # 2. 요일별 테마 및 뉴스 검색 로직
@@ -178,7 +216,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
 
     try:
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite",
+            model=SELECTED_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -194,6 +232,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
 # ==========================================
 def main():
     print("📰 어린이 헤드라인 뉴스 AI 자동 생성 스크립트 시작...")
+    print(f"🧠 사용 모델: {SELECTED_MODEL}")
     
     kst = pytz.timezone('Asia/Seoul')
     today_str = datetime.datetime.now(kst).strftime("%Y-%m-%d")
