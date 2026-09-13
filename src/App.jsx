@@ -347,8 +347,12 @@ export default function App() {
                   if (viewMode === 'today') {
                     fetchArchiveList();
                   } else {
+                    // 💡 "오늘의 뉴스" 클릭 시 반드시 오늘 날짜로 리셋 후 조회
+                    // (아카이브에서 지난 날짜를 보고 온 경우 currentDate가 그 지난 날짜로 남아있던 버그 수정)
+                    const todayStr = getTodayString();
+                    setCurrentDate(todayStr);
                     setViewMode('today');
-                    fetchBriefing(currentDate);
+                    fetchBriefing(todayStr);
                   }
                 }}
                 className="ml-1 px-3 py-1 bg-gray-800 text-white hover:bg-gray-700 rounded text-xs transition cursor-pointer"
