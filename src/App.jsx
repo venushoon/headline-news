@@ -68,6 +68,10 @@ export default function App() {
   // 아카이브 월별 그룹 펼침/접힘 상태 (key: "YYYY-MM")
   const [openMonths, setOpenMonths] = useState({});
 
+  // 검색 결과 (아카이브 전체 대상)
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
+
   useEffect(() => {
     if (initError) return;
     const dateStr = getTodayString();
@@ -100,35 +104,88 @@ export default function App() {
     setLoading(false);
   };
 
-  const fetchArchiveList = async () => {
-    if (!db) return;
-    setLoading(true);
-    setFetchError('');
+  // 아카이브 목록이 아직 없으면 불러오고, 있으면 그대로 반환 (뷰 모드는 바꾸지 않음)
+  const ensureArchiveLoaded = async () => {
+    if (!db) return [];
+    if (archiveList.length > 0) return archiveList;
     try {
-      // 💡 파이어베이스 읽기 비용(요금) 폭탄 방지를 위한 서버 사이드 쿼리 최적화
       const q = query(
         collection(db, 'daily_briefings'),
-        orderBy('__name__', 'desc'), // 문서 ID(날짜) 기준으로 최신순 정렬
-        limit(180)                   // 월별 아코디언 대비 약 6개월치 확보 (읽기 비용은 여전히 제한적)
+        orderBy('__name__', 'desc'),
+        limit(180)
       );
-
       const querySnapshot = await getDocs(q);
       const list = [];
       querySnapshot.forEach((docSnap) => {
         list.push({ date: docSnap.id, articles: docSnap.data().articles });
       });
-
       setArchiveList(list);
-      // 가장 최근 월만 펼친 상태로 시작
-      if (list.length > 0) {
-        setOpenMonths({ [list[0].date.slice(0, 7)]: true });
-      }
-      setViewMode('archive');
+      return list;
     } catch (error) {
       console.error("아카이브 로드 실패:", error);
-      setFetchError(error.message || "아카이브를 불러오지 못했습니다.");
+      return [];
     }
+  };
+
+  const fetchArchiveList = async () => {
+    setLoading(true);
+    setFetchError('');
+    const list = await ensureArchiveLoaded();
+    if (list.length > 0) {
+      setOpenMonths({ [list[0].date.slice(0, 7)]: true });
+    }
+    setViewMode('archive');
     setLoading(false);
+  };
+
+  // 검색어가 바뀌면 아카이브 전체(오늘 포함)를 대상으로 검색
+  useEffect(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (term === '') {
+      setSearchResults([]);
+      return;
+    }
+
+    let cancelled = false;
+    const runSearch = async () => {
+      setIsSearchLoading(true);
+      const list = await ensureArchiveLoaded();
+      if (cancelled) return;
+
+      const results = [];
+      list.forEach((day) => {
+        (day.articles || []).forEach((art) => {
+          if (art.grade !== selectedGrade) return;
+          const haystack = `${art.title || ''} ${art.lede || ''} ${(art.body || []).map(b => b.p || '').join(' ')}`.toLowerCase();
+          if (haystack.includes(term)) {
+            results.push({ date: day.date, article: art });
+          }
+        });
+      });
+      results.sort((a, b) => (a.date < b.date ? 1 : -1));
+
+      if (!cancelled) {
+        setSearchResults(results);
+        setIsSearchLoading(false);
+      }
+    };
+
+    runSearch();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, selectedGrade]);
+
+  const openSearchResult = (date, article) => {
+    setSearchTerm('');
+    setCurrentDate(date);
+    const dayData = archiveList.find(d => d.date === date);
+    const dayArticles = dayData ? dayData.articles : [];
+    setArticles(dayArticles);
+    setViewMode('today');
+
+    const gradeFiltered = dayArticles.filter(a => a.grade === selectedGrade);
+    const idx = gradeFiltered.findIndex(a => a === article);
+    setCurrentArticleIndex(idx >= 0 ? idx : 0);
   };
 
   const handleDateChange = (days) => {
@@ -175,15 +232,7 @@ export default function App() {
     setOpenMonths((prev) => ({ ...prev, [monthKey]: !prev[monthKey] }));
   };
 
-  const filteredArticles = articles.filter(art => {
-    const matchesGrade = art.grade === selectedGrade;
-    const queryText = searchTerm.toLowerCase();
-    const matchesSearch = searchTerm === '' ||
-      (art.title && art.title.toLowerCase().includes(queryText)) ||
-      (art.lede && art.lede.toLowerCase().includes(queryText)) ||
-      (art.body && art.body.some(b => b.p && b.p.toLowerCase().includes(queryText)));
-    return matchesGrade && matchesSearch;
-  });
+  const filteredArticles = articles.filter(art => art.grade === selectedGrade);
 
   const handleDictSearch = (e) => {
     e.preventDefault();
@@ -419,6 +468,29 @@ export default function App() {
           ) : fetchError ? (
             <div className="text-center py-20 text-red-500 font-sans hide-on-print">
               ⚠️ 데이터를 불러오는 중 오류가 발생했습니다: {fetchError}
+            </div>
+          ) : searchTerm.trim() !== '' ? (
+            <div className="hide-on-print font-sans">
+              <h2 className="text-2xl font-bold mb-6 border-b pb-2">🔍 "{searchTerm}" 검색 결과</h2>
+              {isSearchLoading ? (
+                <p className="text-gray-500">검색 중입니다...</p>
+              ) : searchResults.length === 0 ? (
+                <p className="text-gray-500">일치하는 기사가 없습니다.</p>
+              ) : (
+                <div className="space-y-3">
+                  {searchResults.map(({ date, article }, idx) => (
+                    <button
+                      key={`${date}-${idx}`}
+                      onClick={() => openSearchResult(date, article)}
+                      className="w-full text-left p-4 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer"
+                    >
+                      <div className="text-xs text-gray-500 mb-1">{date} ({getDayOfWeek(date)})</div>
+                      <div className="font-bold text-sm md:text-base">{article.title}</div>
+                      <div className="text-xs md:text-sm text-gray-600 mt-1 line-clamp-2">{article.lede}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : viewMode === 'archive' ? (
             <div className="hide-on-print">
