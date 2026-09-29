@@ -49,8 +49,13 @@ db = firestore.client(database_id="headline-news-d6a13")
 # ==========================================
 def get_latest_lite_model(client):
     """
-    사용 가능한 Gemini 모델 중 'flash-lite' 계열의 최신(가장 높은 버전) 모델을 자동으로 찾아 반환.
+    사용 가능한 Gemini 모델 중 'flash-lite' 계열(텍스트 생성용)의 최신 버전을 자동으로 찾아 반환.
     예: gemini-3.5-flash-lite, gemini-3.6-flash-lite 등이 새로 나와도 코드 수정 없이 자동 대응.
+
+    💡 정확히 "gemini-X.Y-flash-lite" 형태로 '끝나는' 모델명만 인정.
+    (gemini-3.8-flash-lite-tts 같은 음성 합성 전용 변종은 JSON 모드 미지원 +
+     별도의 매우 낮은 무료 쿼터를 가지므로 반드시 제외해야 함)
+
     조회 실패 시 안전한 기본값으로 폴백.
     """
     fallback = "gemini-3.5-flash-lite"
@@ -58,12 +63,11 @@ def get_latest_lite_model(client):
         candidates = []
         for m in client.models.list():
             name = m.name.replace("models/", "")
-            # "flash-lite"가 포함된 모델만 (무료/저비용 계열), preview 버전은 제외
-            if "flash-lite" in name and "preview" not in name:
-                match = re.search(r"gemini-(\d+\.\d+)-flash-lite", name)
-                if match:
-                    version = float(match.group(1))
-                    candidates.append((version, name))
+            # "gemini-숫자.숫자-flash-lite"로 정확히 끝나는 것만 허용 (뒤에 -tts, -image 등 접미사 붙은 변종 제외)
+            match = re.fullmatch(r"gemini-(\d+\.\d+)-flash-lite", name)
+            if match:
+                version = float(match.group(1))
+                candidates.append((version, name))
 
         if candidates:
             candidates.sort(reverse=True)  # 버전 높은 순 정렬
@@ -116,7 +120,57 @@ def fetch_news_by_query(query, limit=10):
     return articles
 
 # ==========================================
-# 💡 [신규 추가] 1단계: 규칙 기반 홍보성/저품질 기사 제거
+# 3. 성취기준 CSV 불러오기 
+# ==========================================
+def fetch_standards_csv():
+    url = "https://raw.githubusercontent.com/venushoon/headline-news/refs/heads/main/2026list.csv"
+    try:
+        print("🌐 깃허브에서 성취기준(2026list.csv)을 불러오는 중...")
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req) as response:
+            return response.read().decode('utf-8')
+    except Exception as e:
+        return ""
+
+# ==========================================
+# 💡 성취기준 토큰 다이어트(최적화) 로직
+# ==========================================
+def filter_standards_by_theme(csv_data, theme_name):
+    if not csv_data:
+        return ""
+    
+    theme_keywords = {
+        "우리 사회 (사회/문화)": ["사회", "도덕", "국어", "역사", "인권", "민주"],
+        "지구촌 소식 (세계/국제)": ["사회", "도덕", "세계", "지리", "문화", "국제"],
+        "푸른 지구 (환경/기후)": ["과학", "사회", "도덕", "실과", "환경", "기후", "생태", "탄소", "자연"],
+        "신기한 기술 (과학/IT)": ["과학", "실과", "수학", "정보", "기술", "인공지능", "우주"],
+        "생활과 경제 (경제/안전)": ["사회", "실과", "수학", "안전", "체육", "경제", "소비", "생활"],
+        "문화와 역사 (전통/문화유산)": ["사회", "도덕", "국어", "역사", "문화", "전통", "예술"],
+        "인물과 도전 (위인/성장)": ["국어", "도덕", "사회", "체육", "인물", "봉사"]
+    }
+    
+    keywords = theme_keywords.get(theme_name, [])
+    if not keywords:
+        return csv_data
+        
+    lines = csv_data.strip().split('\n')
+    if len(lines) <= 1:
+        return csv_data
+        
+    header = lines[0]
+    filtered_lines = [header]
+    
+    for line in lines[1:]:
+        if any(keyword in line for keyword in keywords):
+            filtered_lines.append(line)
+            
+    if len(filtered_lines) > 100:
+        filtered_lines = filtered_lines[:100]
+        
+    return '\n'.join(filtered_lines)
+
+# ==========================================
+# 💡 1단계: 규칙 기반 홍보성/저품질 기사 제거
 # ==========================================
 BLACKLIST_KEYWORDS = [
     "채용", "모집", "접수", "부고", "인사", "동정", "포토", "화보",
@@ -130,7 +184,6 @@ BLACKLIST_KEYWORDS = [
 def filter_low_quality_articles(articles):
     """
     제목에 홍보성/저품질 키워드가 포함된 기사를 1차로 걸러냄.
-    (교육 가치보다 광고성/단신에 가까운 기사를 AI 호출 전에 미리 제거해 토큰 절약)
     """
     filtered = []
     for art in articles:
@@ -138,11 +191,10 @@ def filter_low_quality_articles(articles):
         if any(keyword in title for keyword in BLACKLIST_KEYWORDS):
             continue
         filtered.append(art)
-    # 너무 많이 걸러져 후보가 부족하면 원본 그대로 사용
     return filtered if len(filtered) >= 2 else articles
 
 # ==========================================
-# 💡 [신규 추가] 2단계: AI를 이용한 교육 가치 기준 기사 선정 (1회 호출)
+# 💡 2단계: AI를 이용한 교육 가치 기준 기사 선정 (1회 호출)
 # ==========================================
 def select_best_articles_for_kids(articles, theme_name, pick_count=2):
     """
@@ -198,70 +250,15 @@ def select_best_articles_for_kids(articles, theme_name, pick_count=2):
         return articles[:pick_count]
 
 # ==========================================
-# 3. 성취기준 CSV 불러오기 
-# ==========================================
-def fetch_standards_csv():
-    url = "https://raw.githubusercontent.com/venushoon/headline-news/refs/heads/main/2026list.csv"
-    try:
-        print("🌐 깃허브에서 성취기준(2026list.csv)을 불러오는 중...")
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req) as response:
-            return response.read().decode('utf-8')
-    except Exception as e:
-        return ""
-
-# ==========================================
-# 💡 [신규 추가] 성취기준 토큰 다이어트(최적화) 로직
-# ==========================================
-def filter_standards_by_theme(csv_data, theme_name):
-    if not csv_data:
-        return ""
-    
-    # 테마별 연관성이 높은 교과 및 핵심 키워드 매핑
-    theme_keywords = {
-        "우리 사회 (사회/문화)": ["사회", "도덕", "국어", "역사", "인권", "민주"],
-        "지구촌 소식 (세계/국제)": ["사회", "도덕", "세계", "지리", "문화", "국제"],
-        "푸른 지구 (환경/기후)": ["과학", "사회", "도덕", "실과", "환경", "기후", "생태", "탄소", "자연"],
-        "신기한 기술 (과학/IT)": ["과학", "실과", "수학", "정보", "기술", "인공지능", "우주"],
-        "생활과 경제 (경제/안전)": ["사회", "실과", "수학", "안전", "체육", "경제", "소비", "생활"],
-        "문화와 역사 (전통/문화유산)": ["사회", "도덕", "국어", "역사", "문화", "전통", "예술"],
-        "인물과 도전 (위인/성장)": ["국어", "도덕", "사회", "체육", "인물", "봉사"]
-    }
-    
-    keywords = theme_keywords.get(theme_name, [])
-    if not keywords:
-        return csv_data # 매핑된 키워드가 없으면 원본 그대로 반환
-        
-    lines = csv_data.strip().split('\n')
-    if len(lines) <= 1:
-        return csv_data
-        
-    header = lines[0]
-    filtered_lines = [header]
-    
-    for line in lines[1:]:
-        # 현재 테마와 관련된 키워드가 포함된 성취기준 라인만 살려둠
-        if any(keyword in line for keyword in keywords):
-            filtered_lines.append(line)
-            
-    # 혹시라도 너무 많이 걸러졌을 경우를 대비한 최후의 100줄 컷
-    if len(filtered_lines) > 100:
-        filtered_lines = filtered_lines[:100]
-        
-    return '\n'.join(filtered_lines)
-
-# ==========================================
-# 4. 제미나이(Gemini) AI 기사 '변환' 로직
+# 💡 응답 검증 및 정규화
 # ==========================================
 def normalize_article_body(data):
     """
-    AI가 body를 [{"p": "..."}] 형식이 아니라 ["...", "..."] 같은
-    단순 문자열 배열로 반환하는 경우를 대비해 표준 형식으로 통일.
-    (프론트엔드는 article.body[i].p 형태를 기대함)
+    AI가 body를 ["문장1", "문장2"] 형태(문자열 배열)로 반환하는 경우가 있어,
+    프론트엔드가 기대하는 [{"p": "문장1"}, {"p": "문장2"}] 형태로 통일함.
     """
     if not data or not isinstance(data.get("body"), list):
         return data
-
     normalized = []
     for item in data["body"]:
         if isinstance(item, dict) and "p" in item:
@@ -274,7 +271,6 @@ def normalize_article_body(data):
 def is_valid_article(data):
     """
     AI 응답이 화면에 정상적으로 표시될 수 있는 최소 요건을 갖췄는지 검증.
-    (본문이 비어있거나 너무 짧으면 잘린 응답으로 간주)
     """
     if not data:
         return False
@@ -283,12 +279,14 @@ def is_valid_article(data):
     body = data.get("body")
     if not body or not isinstance(body, list):
         return False
-    # 본문 문단이 최소 2개 이상, 각 문단에 실제 텍스트가 있어야 함
     valid_paragraphs = [b for b in body if isinstance(b, dict) and b.get("p") and len(b["p"].strip()) > 5]
     if len(valid_paragraphs) < 2:
         return False
     return True
 
+# ==========================================
+# 4. 제미나이(Gemini) AI 기사 '변환' 로직
+# ==========================================
 def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, standards_csv, max_retries=2):
     prompt = f"""
     너는 초등학생의 문해력 향상을 돕는 '어린이 신문 수석 편집장'이야. 
@@ -334,6 +332,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
     """
 
     for attempt in range(1, max_retries + 1):
+        response = None
         try:
             response = client.models.generate_content(
                 model=SELECTED_MODEL,
@@ -355,7 +354,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
         except Exception as e:
             print(f"  ⚠️ AI 생성 또는 JSON 파싱 에러 발생 ({grade_text}용, 시도 {attempt}/{max_retries}): {e}")
             try:
-                finish_reason = response.candidates[0].finish_reason if 'response' in dir() and response else "알 수 없음"
+                finish_reason = response.candidates[0].finish_reason if response else "알 수 없음"
                 print(f"  🔎 [디버그] finish_reason: {finish_reason}")
                 print(f"  🔎 [디버그] 원본 응답 일부: {response.text[:500] if response and response.text else '(응답 없음)'}")
             except Exception:
@@ -377,8 +376,6 @@ def main():
     print(f"✅ 오늘의 테마: {theme_name} (검색어: {search_query})")
     
     standards_csv = fetch_standards_csv()
-    
-    # 💡 [핵심] 불러온 전체 성취기준을 테마에 맞게 압축하여 토큰 절약
     filtered_standards = filter_standards_by_theme(standards_csv, theme_name)
     
     print("🔍 구글 뉴스에서 관련 기사를 검색 중입니다...")
@@ -412,7 +409,6 @@ def main():
         for grade in grades_to_generate:
             print(f"  🤖 {grade['text']} 수준으로 팩트 기반 변환 중...")
             
-            # 💡 최적화된 성취기준(filtered_standards)을 AI에게 전달
             ai_generated_json = rewrite_article_for_kids(raw_art, theme_name, grade['text'], grade['value'], filtered_standards)
             
             if ai_generated_json:
