@@ -1,1 +1,22 @@
-cnVsZXNfdmVyc2lvbiA9ICcyJzsKCi8vIOyWtOumsOydtCDtl6Trk5zrnbzsnbgg64m07IqkIOKAlCDsi6DrrLjsnYAg64iE6rWs64KYIOydveqzoCwg7JOw6riw64qUIOuwnO2WiSDshJzrsoQoQWRtaW4gU0RLKeunjC4KLy8gQWRtaW4gU0RL64qUIOuztOyViCDqt5zsuZnsnYQg6rGw7LmY7KeAIOyViuycvOuvgOuhnCBtYWluLnB57J2YIOuwnO2WieydgCDsmIHtlqXrsJvsp4Ag7JWK64qU64ukLgovLwovLyDimqDvuI8g7KCB7JqpIOuwqeuylTog7J20IOyggOyepeyGjOyXkOuKlCDquLDrs7gg642w7J207YSw67Kg7J207Iqk6rCAIOyVhOuLjCDrhKTsnoTrk5wg642w7J207YSw67Kg7J207IqkCi8vICdoZWFkbGluZS1uZXdzLWQ2YTEzJ+ydhCDsk7Drr4DroZwsIGZpcmViYXNlIENMSeydmCDquLDrs7gg67Cw7Y+sIOuMgOyDgeqzvCDri6Trpbwg7IiYIOyeiOuLpC4KLy8gRmlyZWJhc2Ug7L2Y7IaUIOKGkiBGaXJlc3RvcmUgRGF0YWJhc2Ug4oaSIChoZWFkbGluZS1uZXdzLWQ2YTEzIOyEoO2DnSkg4oaSIOq3nOy5mSDtg63sl5AKLy8g7J20IOuCtOyaqeydhCDrtpnsl6wg64Sj6rOgIOqyjOyLnO2VmOuKlCDqsoPsnbQg6rCA7J6lIO2ZleyLpO2VmOuLpC4Kc2VydmljZSBjbG91ZC5maXJlc3RvcmUgewogIG1hdGNoIC9kYXRhYmFzZXMve2RhdGFiYXNlfS9kb2N1bWVudHMgewogICAgLy8g7Iug66y4IOuzuOusuDog64iE6rWs64KYIOydveq4sCDqsIDriqUsIO2BtOudvOydtOyWuO2KuCDsk7DquLAg6riI7KeACiAgICBtYXRjaCAvZGFpbHlfYnJpZWZpbmdzL3tkYXRlfSB7CiAgICAgIGFsbG93IGdldCwgbGlzdDogaWYgdHJ1ZTsKICAgICAgYWxsb3cgd3JpdGU6IGlmIGZhbHNlOwogICAgfQogICAgLy8g6re4IOyZuCDrqqjrk6Ag7Lus66CJ7IWY7J2AIOyghOuptCDssKjri6gKICAgIG1hdGNoIC97ZG9jdW1lbnQ9Kip9IHsKICAgICAgYWxsb3cgcmVhZCwgd3JpdGU6IGlmIGZhbHNlOwogICAgfQogIH0KfQo=
+rules_version = '2';
+
+// 어린이 헤드라인 뉴스 — 신문은 누구나 읽고, 쓰기는 발행 서버(Admin SDK)만.
+// Admin SDK는 보안 규칙을 거치지 않으므로 main.py의 발행은 영향받지 않는다.
+//
+// ⚠️ 적용 방법: 이 저장소에는 기본 데이터베이스가 아닌 네임드 데이터베이스
+// 'headline-news-d6a13'을 쓰므로, firebase CLI의 기본 배포 대상과 다를 수 있다.
+// Firebase 콘솔 → Firestore Database → (headline-news-d6a13 선택) → 규칙 탭에
+// 이 내용을 붙여 넣고 게시하는 것이 가장 확실하다.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 신문 본문: 누구나 읽기 가능, 클라이언트 쓰기 금지
+    match /daily_briefings/{date} {
+      allow get, list: if true;
+      allow write: if false;
+    }
+    // 그 외 모든 컬렉션은 전면 차단
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
