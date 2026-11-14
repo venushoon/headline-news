@@ -1,1 +1,30 @@
-aW1wb3J0IHsgaW5pdGlhbGl6ZUFwcCwgZ2V0QXBwcyB9IGZyb20gJ2ZpcmViYXNlL2FwcCc7CmltcG9ydCB7IGdldEZpcmVzdG9yZSB9IGZyb20gJ2ZpcmViYXNlL2ZpcmVzdG9yZSc7CgovLyBGaXJlYmFzZSDstIjquLDtmZTsnZgg7Jyg7J287ZWcIOy2nOyymCDigJQgQXBwLmpzeOuKlCDsl6zquLDshJwgZGLsmYAgaW5pdEVycm9y66W8IOqwgOyguOuLpCDsk7Tri6QuCi8vICjsmIjsoITsl5DripQgQXBwLmpzeCDslYjsl5Ag7LSI6riw7ZmU6rCAIOuYkCDrlLDroZwg7J6I7Ja0IOyEpOygleydtCDslrTquIvrgqAg7IiYIOyeiOyXiOuLpCkKbGV0IGRiID0gbnVsbDsKbGV0IGluaXRFcnJvciA9IG51bGw7Cgp0cnkgewogIGNvbnN0IGZpcmViYXNlQ29uZmlnID0gewogICAgYXBpS2V5OiBpbXBvcnQubWV0YS5lbnYuVklURV9GSVJFQkFTRV9BUElfS0VZIHx8ICIiLAogICAgYXV0aERvbWFpbjogaW1wb3J0Lm1ldGEuZW52LlZJVEVfRklSRUJBU0VfQVVUSF9ET01BSU4gfHwgIiIsCiAgICBwcm9qZWN0SWQ6IGltcG9ydC5tZXRhLmVudi5WSVRFX0ZJUkVCQVNFX1BST0pFQ1RfSUQgfHwgImhlYWRsaW5lLW5ld3MtZDZhMTMiLAogICAgc3RvcmFnZUJ1Y2tldDogaW1wb3J0Lm1ldGEuZW52LlZJVEVfRklSRUJBU0VfU1RPUkFHRV9CVUNLRVQgfHwgIiIsCiAgICBtZXNzYWdpbmdTZW5kZXJJZDogaW1wb3J0Lm1ldGEuZW52LlZJVEVfRklSRUJBU0VfTUVTU0FHSU5HX1NFTkRFUl9JRCB8fCAiIiwKICAgIGFwcElkOiBpbXBvcnQubWV0YS5lbnYuVklURV9GSVJFQkFTRV9BUFBfSUQgfHwgIiIKICB9OwoKICBpZiAoIWZpcmViYXNlQ29uZmlnLmFwaUtleSB8fCBmaXJlYmFzZUNvbmZpZy5hcGlLZXkgPT09ICJZT1VSX0FQSV9LRVkiKSB7CiAgICB0aHJvdyBuZXcgRXJyb3IoIkZpcmViYXNlIO2ZmOqyveuzgOyImChWSVRFX0ZJUkVCQVNFX0FQSV9LRVkp6rCAIOyEpOygleuQmOyngCDslYrslZjsirXri4jri6QuIC5lbnYg7YyM7J287J2EIO2ZleyduO2VtOyjvOyEuOyalC4iKTsKICB9CgogIGNvbnN0IGFwcCA9IGdldEFwcHMoKS5sZW5ndGggPT09IDAgPyBpbml0aWFsaXplQXBwKGZpcmViYXNlQ29uZmlnKSA6IGdldEFwcHMoKVswXTsKICAvLyDtjIzsnbTsjazqs7wg64+Z7J287ZWY6rKMICdoZWFkbGluZS1uZXdzLWQ2YTEzJyDssL3qs6Drpbwg7L2VIOynkeyWtOyEnCDsl7DqsrDtlanri4jri6QuCiAgZGIgPSBnZXRGaXJlc3RvcmUoYXBwLCAiaGVhZGxpbmUtbmV3cy1kNmExMyIpOwp9IGNhdGNoIChlKSB7CiAgaW5pdEVycm9yID0gZS5tZXNzYWdlOwp9CgpleHBvcnQgeyBkYiwgaW5pdEVycm9yIH07Cg==
+import { initializeApp, getApps } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
+
+// Firebase 초기화의 유일한 출처 — App.jsx는 여기서 db와 initError를 가져다 쓴다.
+// (예전에는 App.jsx 안에 초기화가 또 따로 있어 설정이 어긋날 수 있었다)
+let db = null;
+let initError = null;
+
+try {
+  const firebaseConfig = {
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "headline-news-d6a13",
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+    appId: import.meta.env.VITE_FIREBASE_APP_ID || ""
+  };
+
+  if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY") {
+    throw new Error("Firebase 환경변수(VITE_FIREBASE_API_KEY)가 설정되지 않았습니다. .env 파일을 확인해주세요.");
+  }
+
+  const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+  // 파이썬과 동일하게 'headline-news-d6a13' 창고를 콕 집어서 연결합니다.
+  db = getFirestore(app, "headline-news-d6a13");
+} catch (e) {
+  initError = e.message;
+}
+
+export { db, initError };
