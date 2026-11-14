@@ -1,1 +1,139 @@
-IyDwn5OwIOyWtOumsOydtCDtl6Trk5zrnbzsnbgg64m07IqkIChIZWFkbGluZSBOZXdzKQoK66y47ZW066Cl6rO8IOyLnOuvvCDsnZjsi53snYQg7YKk7Jqw64qULCDstIjrk7HtlZnsg53snYQg7JyE7ZWcIEFJIOyekOuPmSDsg53shLEg64m07IqkIOyEnOu5hOyKpOyeheuLiOuLpC4KCuunpOydvCDslYTsuagg7LWc7IugIOuJtOyKpOulvCDsiJjsp5HtlbQgKirstIjrk7HtlZnqtZAgM3407ZWZ64WE6rWwIC8gNX427ZWZ64WE6rWwKiog64iI64aS7J207JeQIOunnuqyjCBBSeqwgCDri6Tsi5wg7JOw6rOgLCAyMDIyIOqwnOyglSDqtZDsnKHqs7zsoJUg7ISx7Leo6riw7KSA6rO8IOyXsOqzhO2VtCDtlZnqtZAg7ZiE7J6l7JeQ7IScIOuwlOuhnCDtmZzsmqntlaAg7IiYIOyeiOuPhOuhnSDsoJzsnpHrkJjsl4jsirXri4jri6QuCgrwn5SXICoq7ISc67mE7IqkIOuwlOuhnOqwgOq4sCoqOiBodHRwczovL3ZlbnVzaG9vbi5naXRodWIuaW8vaGVhZGxpbmUtbmV3cy8KCi0tLQoKIyMg4pyoIOyjvOyalCDquLDriqUKCi0gKipBSSDquLDsgqwg7J6s6rWs7ISxKio6IOybkOusuCDribTsiqTrpbwgR29vZ2xlIEdlbWluaSBBUEnroZwg7ZWZ64WE67OEKDN+NCwgNX427ZWZ64WE6rWwKSDriIjrhpLsnbTsl5Ag66ee7LawIO2Mqe2KuCDquLDrsJjsnLzroZwg7J6s7J6R7ISxCi0gKirqtZDsnKHqs7zsoJUg7Jew6rOEKio6IDIwMjIg6rCc7KCVIOq1kOycoeqzvOyglSDshLHst6jquLDspIDsnYQg7IKs7KCEIOqygOymne2VtCwg6riw7KSA7JeQIOu2gO2Vqe2VmOuKlCDquLDsgqzrp4wg7ISg67OECi0gKirrp6Tsnbwg7J6Q64+ZIOuwnO2WiSoqOiBHaXRIdWIgQWN0aW9ucyDtgazroaDsnLzroZwg66ek7J28IOyVhOy5qCDsnpDrj5kg7IiY7KeRwrfsg53shLHCt+yXheuhnOuTnCAoMDU6MDAgS1NUIDHssKgg67Cc7ZaJICsgMDc6MzAgS1NUIO2ZleyduCDsi6Ttlokg4oCUIDHssKjqsIAg7KeA7Jewwrfsi6TtjKjtlZwg6rK97Jqw7JeQ66eMIOuMgOyLoCDrsJztlontlZjqs6AsIOydtOuvuCDrsJztlonrkJwg64Kg7J2AIEFJ66W8IO2YuOy2nO2VmOyngCDslYrslYQg66y066OMIO2VnOuPhOulvCDslYTrgo3ri4jri6QpCi0gKirsp4Drgpwg6riw7IKsIOyVhOy5tOydtOu4jCoqOiDsm5Trs4Qg7JWE7L2U65SU7Ja4IO2Yle2DnOuhnCDsp4Drgpwg6riw7IKs66W8IO2OuO2VmOqyjCDtg5Dsg4kKLSAqKu2VmeyKtSDrs7TsobAg6riw64qlKioKICAtIOuCseunkCDrj4TsmrDrr7ggKOyWtOugpOyatCDri6jslrQg65y77ZKA7J20KQogIC0g7IOd6rCB7ZW0IOuztOq4sCAo7IKs6rOg66ClIO2ZleyepSDsp4jrrLgpCiAgLSDqta3slrTsgqzsoIQg67CU66GcIOqygOyDiSAo64Sk7J2067KEIOq1reyWtOyCrOyghCDsl7Drj5kpCiAgLSDquIDsnpAg7YGs6riwIOyhsOygiCwg6riw7IKsIOqygOyDiQogIC0g7J247IeEL1BERiDsoIDsnqUgKO2VmeyKteyngCDtmJXtg5zroZwg7Lac66ClIOqwgOuKpSkKLSAqKuuwmOydke2YlSDrlJTsnpDsnbgqKjogUEPsmYAg66qo67CU7J28IO2ZmOqyvSDrqqjrkZAg7KeA7JuQCgotLS0KCiMjIPCfm6Ag6riw7IigIOyKpO2DnQoKfCDsmIHsl60gfCDquLDsiKAgfAp8LS0tfC0tLXwKfCDtlITroaDtirjsl5Trk5wgfCBSZWFjdCAoVml0ZSksIFRhaWx3aW5kIENTUyB8Cnwg67Cx7JeU65OcIHwgUHl0aG9uIHwKfCBBSSB8IEdvb2dsZSBHZW1pbmkgQVBJIChgZ29vZ2xlLWdlbmFpYCkgfAp8IOuNsOydtO2EsOuyoOydtOyKpCB8IEZpcmViYXNlIEZpcmVzdG9yZSB8Cnwg64m07IqkIOyImOynkSB8IFJTUyAoZmVlZHBhcnNlcikgfAp8IOuwsO2PrCB8IEdpdEh1YiBQYWdlcyAo7ZSE66Gg7Yq47JeU65OcKSB8Cnwg7J6Q64+Z7ZmUIHwgR2l0SHViIEFjdGlvbnMgKOunpOydvCDtgazroaAg7Iuk7ZaJKSB8CgotLS0KCiMjIPCfk4Ig7ZSE66Gc7KCd7Yq4IOq1rOyhsAoKYGBgCmhlYWRsaW5lLW5ld3MvCuKUnOKUgOKUgCBzcmMvCuKUgiAgIOKUnOKUgOKUgCBBcHAuanN4ICAgICAgICAgICAjIOuplOyduCDtmZTrqbQg7Lu07Y+s64SM7Yq4CuKUgiAgIOKUnOKUgOKUgCBBcHAuY3NzICAgICAgICAgICAjIOyKpO2DgOydvArilIIgICDilJzilIDilIAgZmlyZWJhc2UuanMgICAgICAgIyBGaXJlYmFzZSDtgbTrnbzsnbTslrjtirgg7ISk7KCVCuKUgiAgIOKUnOKUgOKUgCBtYWluLmpzeArilIIgICDilJTilIDilIAgYXNzZXRzLwrilJzilIDilIAgLmdpdGh1Yi8K4pSCICAg4pSU4pSA4pSAIHdvcmtmbG93cy8K4pSCICAgICAgIOKUnOKUgOKUgCBkYWlseS1uZXdzLnltbCAgICMg66ek7J28IOyVhOy5qCDsnpDrj5kg7Iuk7ZaJIOybjO2BrO2UjOuhnOyasCAo67Cc7ZaJICsg7ZmV7J24IOyLpO2WiSkK4pSCICAgICAgIOKUlOKUgOKUgCBkZXBsb3ktcGFnZXMueW1sICMg7ZSE66Gg7Yq47JeU65OcIOyekOuPmSDruYzrk5zCt+uwsO2PrCDsm4ztgaztlIzroZzsmrAK4pSc4pSA4pSAIGZpcmVzdG9yZS5ydWxlcyAgICAgICAgIyBGaXJlc3RvcmUg67O07JWIIOq3nOy5mSAo7J296riwIOqzteqwnCAvIOyTsOq4sCDshJzrsoQg7KCE7JqpKQrilJzilIDilIAgLmVudi5leGFtcGxlICAgICAgICAgICAjIO2VhOyalO2VnCDtmZjqsr0g67OA7IiYIOuqqeuhnQrilJzilIDilIAgbWFpbi5weSAgICAgICAgICAgICAgICAjIOuJtOyKpCDsiJjsp5EgKyDsm5DrrLgg67O466y4IOyImOynkSArIEFJIOyerOyekeyEsSArIEZpcmVzdG9yZSDsl4XroZzrk5wg7Iqk7YGs66a97Yq4CuKUnOKUgOKUgCByZXF1aXJlbWVudHMudHh0CuKUnOKUgOKUgCB2aXRlLmNvbmZpZy5qcwrilJTilIDilIAgcGFja2FnZS5qc29uCmBgYAoKLS0tCgojIyDimpnvuI8g64+Z7J6RIOq1rOyhsAoKYGBgCkdpdEh1YiBBY3Rpb25zICjrp6TsnbwgMDU6MDAgS1NUIOuwnO2WiSArIDA3OjMwIEtTVCDtmZXsnbgg7Iuk7ZaJKQogICAgICAgIOKUggogICAgICAgIOKWvAogICBtYWluLnB5IOyLpO2WiQogICDilJzilIAg7Jik64qYIOusuOyEnOqwgCDsnbTrr7gg7J6I7Jy866m0IOymieyLnCDsooXro4wgKEFJIO2YuOy2nCAw7ZqMKQogICDilJzilIAgUlNT66GcIOy1nOyLoCDribTsiqQg7IiY7KeRICsg7JuQ66y4IOuzuOusuCDsiJjsp5EgKOydvOuwmCBIVFRQKQogICDilJzilIAgMjAyMiDqsJzsoJUg6rWQ7Jyh6rO87KCVIOyEsey3qOq4sOykgCDqsoDspp0KICAg4pSc4pSAIEdlbWluaSBBUEnroZwg7ZWZ64WE67OEIOq4sOyCrCDsnqzsnpHshLEgKOyLpO2WieuLuSDtmLjstpwg7IOB7ZWc7Jy866GcIOustOujjCDsv7zthLAg67O07Zi4KQogICDilJTilIAgRmlyZXN0b3Jl7JeQIOuCoOynnOuzhCDrrLjshJzroZwg7KCA7J6lIChkYWlseV9icmllZmluZ3MvWVlZWS1NTS1ERCkKICAgICAgICDilIIKICAgICAgICDilrwKRmlyZXN0b3JlIChkYWlseV9icmllZmluZ3Mg7Lus66CJ7IWYKQogICAgICAgIOKUggogICAgICAgIOKWvApHaXRIdWIgUGFnZXMgKFJlYWN0IOyVsSkKICAg4pSU4pSAIOu4jOudvOyasOyggOyXkOyEnCBGaXJlc3RvcmXrpbwg7KeB7KCRIOyhsO2ajO2VtCDtmZTrqbTsl5Ag7ZGc7IucCmBgYAoKLSDrsLHsl5Trk5woYG1haW4ucHlgKeyZgCDtlITroaDtirjsl5Trk5zripQg7JmE7KCE7Z6IIOu2hOumrOuQnCDrkZAg7Iuc7Iqk7YWc7J6F64uI64ukLgotIEdpdEh1YiBBY3Rpb25z64qUIO2VmOujqCDtlZwg67KIIOyKpO2BrOumve2KuOulvCDsi6TtlontlZjqs6Ag7KKF66OM65CY66mwLCBHaXRIdWIgUGFnZXPripQg7KCV7KCBIO2MjOydvOydhCDsg4Hsi5wg7Zi47Iqk7YyF7ZWp64uI64ukLgoKLS0tCgojIyDwn5qAIOuhnOy7rCDqsJzrsJwKCiMjIyDtlITroaDtirjsl5Trk5wKYGBgYmFzaApucG0gaW5zdGFsbApucG0gcnVuIGRldgpgYGAKCiMjIyDrsLHsl5Trk5wgKOuJtOyKpCDsiJjsp5Eg7Iqk7YGs66a97Yq4IOyImOuPmSDsi6TtlokpCmBgYGJhc2gKcGlwIGluc3RhbGwgLXIgcmVxdWlyZW1lbnRzLnR4dApweXRob24zIG1haW4ucHkKYGBgCgo+IGAuZW52YOyZgCBgc2VydmljZUFjY291bnRLZXkuanNvbmAg7YyM7J287J20IOuhnOy7rOyXkCDsnojslrTslbwg7ZWY66mwLCDrkZAg7YyM7J28IOuqqOuRkCBgLmdpdGlnbm9yZWDsl5Ag7Y+s7ZWo65CY7Ja0IOyggOyepeyGjOyXkCDsmKzrnbzqsIDsp4Ag7JWK7Iq164uI64ukLgoKIyMjIOuwsO2PrArtlITroaDtirjsl5Trk5wg7YyM7J28KGBzcmMvYCwgYGluZGV4Lmh0bWxgIOuTsSnsnbQgYG1haW5g7JeQIO2RuOyLnOuQmOuptCBHaXRIdWIgQWN0aW9uc+qwgCDsnpDrj5nsnLzroZwg67mM65Oc7ZW0IEdpdEh1YiBQYWdlc+yXkCDrsLDtj6ztlanri4jri6QuCuuLqCwg7KCA7J6l7IaMIFNlY3JldHPsl5AgYFZJVEVfRklSRUJBU0VfKmAgNuqwnOqwgCDrk7HroZ3rj7wg7J6I7Ja07JW8IO2VmOupsCwg7JeG7Jy866m0IOyCrOydtO2KuCDrs7TtmLjrpbwg7JyE7ZW0IOuwsO2PrCDsoITsl5Ag7KSR64uo65Cp64uI64ukLgoK7IiY64+ZIOuwsO2PrCjquLDsobQg67Cp7IudKeuPhCDqt7jrjIDroZwg6rCA64ql7ZWp64uI64ukLgpgYGBiYXNoCm5wbSBydW4gZGVwbG95CmBgYAoKLS0tCgojIyDwn5SQIO2ZmOqyvSDrs4DsiJgg67CPIOuztOyViAoK64uk7J2MIO2MjOydvOydgCDrr7zqsJAg7KCV67O066W8IOuLtOqzoCDsnojslrQg7KCA7J6l7IaM7JeQIO2PrO2VqOuQmOyngCDslYrsirXri4jri6QuCgotIGAuZW52YCDigJQgR2VtaW5pIEFQSSDtgqQg65OxCi0gYHNlcnZpY2VBY2NvdW50S2V5Lmpzb25gIOKAlCBGaXJlYmFzZSDshJzruYTsiqQg6rOE7KCVIO2CpAoKR2l0SHViIEFjdGlvbnMg7Iuk7ZaJIOyLnOyXkOuKlCDsoIDsnqXshozsnZggKipTZWNyZXRzKirrpbwg7Ya17ZW0IOyViOyghO2VmOqyjCDso7zsnoXrkKnri4jri6Qg4oCUIOuwnO2WieyaqSBgR0VNSU5JX0FQSV9LRVlgLCBgRklSRUJBU0VfQURNSU5fS0VZYOyZgCDtlITroaDtirgg67mM65Oc7JqpIGBWSVRFX0ZJUkVCQVNFXypgIDbqsJwuIO2VhOyalO2VnCDrs4DsiJgg66qp66Gd7J2AIGAuZW52LmV4YW1wbGVg7J2EIOywuOqzoO2VmOyEuOyalC4KCkZpcmVzdG9yZSDrs7TslYgg6rec7LmZ7J2AIGBmaXJlc3RvcmUucnVsZXNg7JeQIOyeiOyKteuLiOuLpCjsnb3quLDrp4wg6rO16rCcLCDsk7DquLDripQg67Cc7ZaJIOyEnOuyhCDsoITsmqkpLiDrhKTsnoTrk5wg642w7J207YSw67Kg7J207IqkKGBoZWFkbGluZS1uZXdzLWQ2YTEzYCnrpbwg7JOw66+A66GcLCDsvZjshpTsnZgg7ZW064u5IOuNsOydtO2EsOuyoOydtOyKpCDqt5zsuZkg7YOt7JeQIOu2meyXrCDrhKPslrQg7KCB7Jqp7ZWY7IS47JqULgoKLS0tCgojIyDimqDvuI8g7JWI64K0Cgrrs7jrrLjsnYAg7J246rO17KeA64qlKEFJKeydtCDsm5DrrLgg6riw7IKs66W8IOyWtOumsOydtCDriIjrhpLsnbTroZwg64uk7IucIOyTtCDquIDroZwsIOybkOusuOqzvCDri6TrpbTqsbDrgpgg7J2867aAIOuCtOyaqeydtCDsg53rnrXrkKAg7IiYIOyeiOyKteuLiOuLpC4g7KCV7ZmV7ZWcIOuCtOyaqeydgCDquLDsgqwg7ZWY64uo7J2YIOybkOusuCDrp4Htgazsl5DshJwg7ZmV7J247ZW0IOyjvOyEuOyalC4KCi0tLQoKIyMg8J+ThCDrnbzsnbTshKDsiqQKCsKpIOyWtOumsOydtCDtl6Trk5zrnbzsnbgg64m07Iqk
+# 📰 어린이 헤드라인 뉴스 (Headline News)
+
+문해력과 시민 의식을 키우는, 초등학생을 위한 AI 자동 생성 뉴스 서비스입니다.
+
+매일 아침 최신 뉴스를 수집해 **초등학교 3~4학년군 / 5~6학년군** 눈높이에 맞게 AI가 다시 쓰고, 2022 개정 교육과정 성취기준과 연계해 학교 현장에서 바로 활용할 수 있도록 제작되었습니다.
+
+🔗 **서비스 바로가기**: https://venushoon.github.io/headline-news/
+
+---
+
+## ✨ 주요 기능
+
+- **AI 기사 재구성**: 원문 뉴스를 Google Gemini API로 학년별(3~4, 5~6학년군) 눈높이에 맞춰 팩트 기반으로 재작성
+- **교육과정 연계**: 2022 개정 교육과정 성취기준을 사전 검증해, 기준에 부합하는 기사만 선별
+- **매일 자동 발행**: GitHub Actions 크론으로 매일 아침 자동 수집·생성·업로드 (05:00 KST 1차 발행 + 07:30 KST 확인 실행 — 1차가 지연·실패한 경우에만 대신 발행하고, 이미 발행된 날은 AI를 호출하지 않아 무료 한도를 아낍니다)
+- **지난 기사 아카이브**: 월별 아코디언 형태로 지난 기사를 편하게 탐색
+- **학습 보조 기능**
+  - 낱말 도우미 (어려운 단어 뜻풀이)
+  - 생각해 보기 (사고력 확장 질문)
+  - 국어사전 바로 검색 (네이버 국어사전 연동)
+  - 글자 크기 조절, 기사 검색
+  - 인쇄/PDF 저장 (학습지 형태로 출력 가능)
+- **반응형 디자인**: PC와 모바일 환경 모두 지원
+
+---
+
+## 🛠 기술 스택
+
+| 영역 | 기술 |
+|---|---|
+| 프론트엔드 | React (Vite), Tailwind CSS |
+| 백엔드 | Python |
+| AI | Google Gemini API (`google-genai`) |
+| 데이터베이스 | Firebase Firestore |
+| 뉴스 수집 | RSS (feedparser) |
+| 배포 | GitHub Pages (프론트엔드) |
+| 자동화 | GitHub Actions (매일 크론 실행) |
+
+---
+
+## 📂 프로젝트 구조
+
+```
+headline-news/
+├── src/
+│   ├── App.jsx           # 메인 화면 컴포넌트
+│   ├── App.css           # 스타일
+│   ├── firebase.js       # Firebase 클라이언트 설정
+│   ├── main.jsx
+│   └── assets/
+├── .github/
+│   └── workflows/
+│       ├── daily-news.yml   # 매일 아침 자동 실행 워크플로우 (발행 + 확인 실행)
+│       └── deploy-pages.yml # 프론트엔드 자동 빌드·배포 워크플로우
+├── firestore.rules        # Firestore 보안 규칙 (읽기 공개 / 쓰기 서버 전용)
+├── .env.example           # 필요한 환경 변수 목록
+├── main.py                # 뉴스 수집 + 원문 본문 수집 + AI 재작성 + Firestore 업로드 스크립트
+├── requirements.txt
+├── vite.config.js
+└── package.json
+```
+
+---
+
+## ⚙️ 동작 구조
+
+```
+GitHub Actions (매일 05:00 KST 발행 + 07:30 KST 확인 실행)
+        │
+        ▼
+   main.py 실행
+   ├─ 오늘 문서가 이미 있으면 즉시 종료 (AI 호출 0회)
+   ├─ RSS로 최신 뉴스 수집 + 원문 본문 수집 (일반 HTTP)
+   ├─ 2022 개정 교육과정 성취기준 검증
+   ├─ Gemini API로 학년별 기사 재작성 (실행당 호출 상한으로 무료 쿼터 보호)
+   └─ Firestore에 날짜별 문서로 저장 (daily_briefings/YYYY-MM-DD)
+        │
+        ▼
+Firestore (daily_briefings 컬렉션)
+        │
+        ▼
+GitHub Pages (React 앱)
+   └─ 브라우저에서 Firestore를 직접 조회해 화면에 표시
+```
+
+- 백엔드(`main.py`)와 프론트엔드는 완전히 분리된 두 시스템입니다.
+- GitHub Actions는 하루 한 번 스크립트를 실행하고 종료되며, GitHub Pages는 정적 파일을 상시 호스팅합니다.
+
+---
+
+## 🚀 로컬 개발
+
+### 프론트엔드
+```bash
+npm install
+npm run dev
+```
+
+### 백엔드 (뉴스 수집 스크립트 수동 실행)
+```bash
+pip install -r requirements.txt
+python3 main.py
+```
+
+> `.env`와 `serviceAccountKey.json` 파일이 로컬에 있어야 하며, 두 파일 모두 `.gitignore`에 포함되어 저장소에 올라가지 않습니다.
+
+### 배포
+프론트엔드 파일(`src/`, `index.html` 등)이 `main`에 푸시되면 GitHub Actions가 자동으로 빌드해 GitHub Pages에 배포합니다.
+단, 저장소 Secrets에 `VITE_FIREBASE_*` 6개가 등록돼 있어야 하며, 없으면 사이트 보호를 위해 배포 전에 중단됩니다.
+
+수동 배포(기존 방식)도 그대로 가능합니다.
+```bash
+npm run deploy
+```
+
+---
+
+## 🔐 환경 변수 및 보안
+
+다음 파일은 민감 정보를 담고 있어 저장소에 포함되지 않습니다.
+
+- `.env` — Gemini API 키 등
+- `serviceAccountKey.json` — Firebase 서비스 계정 키
+
+GitHub Actions 실행 시에는 저장소의 **Secrets**를 통해 안전하게 주입됩니다 — 발행용 `GEMINI_API_KEY`, `FIREBASE_ADMIN_KEY`와 프론트 빌드용 `VITE_FIREBASE_*` 6개. 필요한 변수 목록은 `.env.example`을 참고하세요.
+
+Firestore 보안 규칙은 `firestore.rules`에 있습니다(읽기만 공개, 쓰기는 발행 서버 전용). 네임드 데이터베이스(`headline-news-d6a13`)를 쓰므로, 콘솔의 해당 데이터베이스 규칙 탭에 붙여 넣어 적용하세요.
+
+---
+
+## ⚠️ 안내
+
+본문은 인공지능(AI)이 원문 기사를 어린이 눈높이로 다시 쓴 글로, 원문과 다르거나 일부 내용이 생략될 수 있습니다. 정확한 내용은 기사 하단의 원문 링크에서 확인해 주세요.
+
+---
+
+## 📄 라이선스
+
+© 어린이 헤드라인 뉴스
