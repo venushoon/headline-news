@@ -2,26 +2,54 @@ name: Daily Headline News
 
 on:
   schedule:
-    - cron: '1 15 * * *'
+    # 1차 발행: 05:00 KST (전날 20:00 UTC) — GitHub 스케줄 지연을 감안한 시각
+    - cron: '0 20 * * *'
+    # 확인 실행: 07:30 KST (전날 22:30 UTC) — 1차가 지연·실패했을 때만 대신 발행한다.
+    # 이미 발행된 날은 main.py가 기사 생성 호출 없이 종료하므로 무료 한도에 영향이 없다.
+    - cron: '30 22 * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: '이미 발행된 날도 강제로 다시 만들기'
+        type: boolean
+        default: false
+
+# 같은 워크플로우가 겹쳐 돌며 같은 날 신문을 두 번 만들지 않도록 직렬화
+concurrency:
+  group: daily-headline-news
+  cancel-in-progress: false
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Create firebase key file
-        run: echo '${{ secrets.FIREBASE_ADMIN_KEY }}' > serviceAccountKey.json
+        run: printf '%s' '${{ secrets.FIREBASE_ADMIN_KEY }}' > serviceAccountKey.json
 
       - name: Run script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FORCE_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) && '1' || '' }}
         run: python main.py
+
+      - name: Open issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TODAY_KST=$(TZ=Asia/Seoul date +%F)
+          TITLE="[발행 실패] ${TODAY_KST} 어린이 헤드라인 뉴스"
+          if [ -z "$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number')" ]; then
+            gh issue create --title "$TITLE" --body "자동 발행 워크플로우가 실패했습니다. 실행 로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
