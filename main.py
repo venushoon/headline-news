@@ -507,11 +507,12 @@ def normalize_article_body(data):
     data["body"] = normalized
     return data
 
-def is_valid_article(data, expected_paragraphs=None):
+def is_valid_article(data, expected_paragraphs=None, level_check=None):
     """
     AI 응답이 화면에 정상적으로 표시될 수 있는 최소 요건을 갖췄는지 검증.
-    expected_paragraphs가 주어지면 유효 문단 수가 정확히 그 개수와 같아야 한다
-    (학년별 문단 수 규칙을 모델이 어기면 재시도로 다시 받기 위함).
+    expected_paragraphs가 주어지면 유효 문단 수가 정확히 그 개수와 같아야 하고,
+    level_check가 주어지면 문장 길이·총 분량의 학년별 하드 bound도 검사한다
+    (규칙을 어기면 재시도로 다시 받기 위함).
     """
     if not data:
         return False
@@ -521,35 +522,73 @@ def is_valid_article(data, expected_paragraphs=None):
     if not body or not isinstance(body, list):
         return False
     valid_paragraphs = [b for b in body if isinstance(b, dict) and b.get("p") and len(b["p"].strip()) > 5]
-    if expected_paragraphs is not None:
-        return len(valid_paragraphs) == expected_paragraphs
-    return len(valid_paragraphs) >= 2
+    if expected_paragraphs is not None and len(valid_paragraphs) != expected_paragraphs:
+        return False
+    if expected_paragraphs is None and len(valid_paragraphs) < 2:
+        return False
+    if level_check:
+        total, avg_sent, max_sent = _body_metrics([b["p"] for b in valid_paragraphs])
+        if max_sent > level_check["max_sent"] or avg_sent > level_check["max_avg_sent"]:
+            return False
+        if total < level_check["min_total"] or total > level_check["max_total"]:
+            return False
+    return True
+
+def _body_metrics(paragraph_texts):
+    """본문 문단들에서 (총 글자수, 평균 문장 길이, 최장 문장 길이)를 잰다."""
+    total = sum(len(t) for t in paragraph_texts)
+    sents = []
+    for t in paragraph_texts:
+        sents += [s.strip() for s in re.split(r"[.!?]+", t) if s.strip()]
+    if not sents:
+        return total, 0, 0
+    lens = [len(s) for s in sents]
+    return total, sum(lens) / len(lens), max(lens)
 
 # ==========================================
 # 4. 제미나이(Gemini) AI 기사 '변환' 로직
 # ==========================================
-# 학년별 본문 문단 구성 (2026-11-15: 3~4학년 3문단, 5~6학년 4문단)
-GRADE_BODY_SPECS = {
+# 학년별 본문 구성·난이도 기준 (2026-11-15: 3~4학년 3문단, 5~6학년 4문단 + 난이도 차등)
+# level_rules는 프롬프트에 그대로 들어가고, check는 검증에서 기계적으로 거르는 하드 bound다
+# (프롬프트 목표보다 넓게 잡아 재시도 폭증을 막는다).
+GRADE_SPECS = {
     "3-4": {
         "count": 3,
         "roles": ["육하원칙 요약", "배경/설명", "결과/전망"],
         "sentences": "각 문단은 최소 2문장 이상",
+        "level_rules": [
+            "한 문장은 40자 안팎으로 짧게 쓰고, 60자를 넘기지 않는다. 한 문장에는 하나의 정보만 담는다.",
+            "사람 이름과 직함을 줄줄이 나열하지 않는다. 꼭 필요한 인물만 쓴다.",
+            "어려운 한자어·외래어·전문용어는 쉬운 말로 바꾸고, 바꿀 수 없으면 바로 뒤에 괄호로 짧게 뜻을 덧붙인다. (예: '사업 재편(회사가 하는 일을 다시 정리하는 것)')",
+            "기관·단체의 긴 공식 이름은 짧게 줄여 쓴다.",
+        ],
+        "total_range": (450, 600),
+        "check": {"max_sent": 100, "max_avg_sent": 65, "min_total": 350, "max_total": 800},
     },
     "5-6": {
         "count": 4,
         "roles": ["육하원칙 요약", "배경", "자세한 내용 (관련 인물·추가 사실)", "결과/전망"],
         "sentences": "각 문단은 2~3문장",
+        "level_rules": [
+            "한 문장은 60~80자까지 쓸 수 있고, 원인과 결과를 접속 표현으로 연결해도 좋다.",
+            "어려운 용어는 문맥 속에서 풀어 설명하거나 괄호로 뜻을 덧붙인다.",
+            "사실의 배경과 원인, 앞으로 미칠 영향까지 포함해 한 단계 깊게 설명한다.",
+        ],
+        "total_range": (650, 850),
+        "check": {"max_sent": 140, "max_avg_sent": 95, "min_total": 520, "max_total": 1100},
     },
 }
 
 def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, standards_csv, max_retries=2):
-    spec = GRADE_BODY_SPECS.get(grade_value, GRADE_BODY_SPECS["3-4"])
+    spec = GRADE_SPECS.get(grade_value, GRADE_SPECS["3-4"])
     target_count = spec["count"]
     ordinal = ["첫 번째", "두 번째", "세 번째", "네 번째", "다섯 번째"]
     roles_text = " → ".join(spec["roles"])
     body_example = ",\n            ".join(
         '{"p": "' + f"{ordinal[i]} 문단 ({role})" + '"}'
         for i, role in enumerate(spec["roles"]))
+    level_rules_block = "\n".join(f"       - {r}" for r in spec["level_rules"])
+    total_min, total_max = spec["total_range"]
     prompt = f"""
     너는 초등학생의 문해력 향상을 돕는 '어린이 신문 수석 편집장'이야. 
     오늘 신문의 핵심 테마는 '{theme_name}'야.
@@ -560,6 +599,9 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
     2. 문체: 실제 신문 기사와 같은 객관적인 평어체(~다., ~밝혔다, ~전망이다 등) 사용. 대화체나 존댓말 금지.
     3. 분량 및 구조: body는 반드시 {target_count}개의 문단(p)으로 구성하며, 문단의 역할은 순서대로 [{roles_text}] 이다. {spec['sentences']}으로 작성할 것. body를 비워두거나 문단 개수를 어기는 것은 절대 금지. 특히, 첫 번째 문단(body[0])은 반드시 '누가, 언제, 어디서, 무엇을, 어떻게, 왜(육하원칙)' 했는지가 명확하게 드러나는 핵심 요약(리드문)으로 작성할 것.
     4. 성취기준 매칭: [성취기준 후보]로 제공된 CSV 데이터를 검토해 보고 이 기사와 완벽하게 일치하면 standards 배열에 추가, 없으면 빈 배열([])로 둘 것.
+    5. 난이도 ({grade_text} 기준 — 반드시 지킬 것):
+{level_rules_block}
+       - 본문 전체 분량은 {total_min}~{total_max}자 사이로 맞춘다.
 
     [성취기준 후보 (CSV 형식)]
     {standards_csv}
@@ -605,10 +647,10 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             data = json.loads(response.text)
             data = normalize_article_body(data)
 
-            if is_valid_article(data, expected_paragraphs=target_count):
+            if is_valid_article(data, expected_paragraphs=target_count, level_check=spec["check"]):
                 return data
             else:
-                print(f"  ⚠️ 본문이 비었거나 문단 수가 목표({target_count}개)와 다른 응답 (시도 {attempt}/{max_retries}) - 재시도합니다.")
+                print(f"  ⚠️ 본문이 비었거나 문단 수(목표 {target_count}개)·난이도 기준과 다른 응답 (시도 {attempt}/{max_retries}) - 재시도합니다.")
                 print(f"  🔎 [디버그] 실제 응답 데이터: {json.dumps(data, ensure_ascii=False)[:500]}")
 
         except QuotaExceededError:
