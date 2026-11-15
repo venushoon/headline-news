@@ -507,9 +507,11 @@ def normalize_article_body(data):
     data["body"] = normalized
     return data
 
-def is_valid_article(data):
+def is_valid_article(data, expected_paragraphs=None):
     """
     AI 응답이 화면에 정상적으로 표시될 수 있는 최소 요건을 갖췄는지 검증.
+    expected_paragraphs가 주어지면 유효 문단 수가 정확히 그 개수와 같아야 한다
+    (학년별 문단 수 규칙을 모델이 어기면 재시도로 다시 받기 위함).
     """
     if not data:
         return False
@@ -519,14 +521,35 @@ def is_valid_article(data):
     if not body or not isinstance(body, list):
         return False
     valid_paragraphs = [b for b in body if isinstance(b, dict) and b.get("p") and len(b["p"].strip()) > 5]
-    if len(valid_paragraphs) < 2:
-        return False
-    return True
+    if expected_paragraphs is not None:
+        return len(valid_paragraphs) == expected_paragraphs
+    return len(valid_paragraphs) >= 2
 
 # ==========================================
 # 4. 제미나이(Gemini) AI 기사 '변환' 로직
 # ==========================================
+# 학년별 본문 문단 구성 (2026-11-15: 3~4학년 3문단, 5~6학년 4문단)
+GRADE_BODY_SPECS = {
+    "3-4": {
+        "count": 3,
+        "roles": ["육하원칙 요약", "배경/설명", "결과/전망"],
+        "sentences": "각 문단은 최소 2문장 이상",
+    },
+    "5-6": {
+        "count": 4,
+        "roles": ["육하원칙 요약", "배경", "자세한 내용 (관련 인물·추가 사실)", "결과/전망"],
+        "sentences": "각 문단은 2~3문장",
+    },
+}
+
 def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, standards_csv, max_retries=2):
+    spec = GRADE_BODY_SPECS.get(grade_value, GRADE_BODY_SPECS["3-4"])
+    target_count = spec["count"]
+    ordinal = ["첫 번째", "두 번째", "세 번째", "네 번째", "다섯 번째"]
+    roles_text = " → ".join(spec["roles"])
+    body_example = ",\n            ".join(
+        '{"p": "' + f"{ordinal[i]} 문단 ({role})" + '"}'
+        for i, role in enumerate(spec["roles"]))
     prompt = f"""
     너는 초등학생의 문해력 향상을 돕는 '어린이 신문 수석 편집장'이야. 
     오늘 신문의 핵심 테마는 '{theme_name}'야.
@@ -535,7 +558,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
     [작성 규칙]
     1. 팩트 엄수: 원문에 없는 내용을 상상해서 덧붙이거나 사실 관계를 바꾸는 일(할루시네이션)은 절대 금지.
     2. 문체: 실제 신문 기사와 같은 객관적인 평어체(~다., ~밝혔다, ~전망이다 등) 사용. 대화체나 존댓말 금지.
-    3. 분량 및 구조: body는 반드시 3개 이상 4개 이하의 문단(p)을 포함해야 하며, 각 문단은 최소 2문장 이상으로 작성. body를 비워두거나 1개 문단만 작성하는 것은 절대 금지. 특히, 첫 번째 문단(body[0])은 반드시 '누가, 언제, 어디서, 무엇을, 어떻게, 왜(육하원칙)' 했는지가 명확하게 드러나는 핵심 요약(리드문)으로 작성할 것.
+    3. 분량 및 구조: body는 반드시 {target_count}개의 문단(p)으로 구성하며, 문단의 역할은 순서대로 [{roles_text}] 이다. {spec['sentences']}으로 작성할 것. body를 비워두거나 문단 개수를 어기는 것은 절대 금지. 특히, 첫 번째 문단(body[0])은 반드시 '누가, 언제, 어디서, 무엇을, 어떻게, 왜(육하원칙)' 했는지가 명확하게 드러나는 핵심 요약(리드문)으로 작성할 것.
     4. 성취기준 매칭: [성취기준 후보]로 제공된 CSV 데이터를 검토해 보고 이 기사와 완벽하게 일치하면 standards 배열에 추가, 없으면 빈 배열([])로 둘 것.
 
     [성취기준 후보 (CSV 형식)]
@@ -551,9 +574,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
         "title": "기사 제목",
         "lede": "한 줄 리드",
         "body": [
-            {{"p": "첫 번째 문단 (육하원칙 요약, 2문장 이상)"}},
-            {{"p": "두 번째 문단 (배경/설명, 2문장 이상)"}},
-            {{"p": "세 번째 문단 (결과/전망, 2문장 이상)"}}
+            {body_example}
         ],
         "vocabularies": [
             {{"word": "단어", "meaning": "뜻풀이"}}
@@ -584,10 +605,10 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             data = json.loads(response.text)
             data = normalize_article_body(data)
 
-            if is_valid_article(data):
+            if is_valid_article(data, expected_paragraphs=target_count):
                 return data
             else:
-                print(f"  ⚠️ 본문이 비었거나 불완전한 응답 (시도 {attempt}/{max_retries}) - 재시도합니다.")
+                print(f"  ⚠️ 본문이 비었거나 문단 수가 목표({target_count}개)와 다른 응답 (시도 {attempt}/{max_retries}) - 재시도합니다.")
                 print(f"  🔎 [디버그] 실제 응답 데이터: {json.dumps(data, ensure_ascii=False)[:500]}")
 
         except QuotaExceededError:
