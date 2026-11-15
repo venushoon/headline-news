@@ -3,6 +3,7 @@ import re
 import io
 import csv
 import json
+import time
 import datetime
 import pytz
 import feedparser
@@ -19,34 +20,67 @@ from google.genai import types
 # 0. 무료 한도 가드 & 공통 설정
 # ==========================================
 # 💡 무료 범위 보장 장치 (신문 발행은 Gemini 무료 등급 안에서만 동작):
-#  - 하루 실행당 Gemini 호출 횟수 상한. 모델 목록 조회(1) + 기사 선정(1)
-#    + 재작성(기사 2개 × 학년 2개 × 최대 재시도 2회 = 최대 8) = 최대 10회.
-#    상한에 닿으면 더 부르지 않고 중단해 무료 쿼터 초과를 막는다.
+#  - 하루 실행당 Gemini 호출 횟수 상한. 기사 선정(1)
+#    + 재작성(기사 2개 × 학년 2개 × 최대 재시도 2회 = 최대 8) = 최대 9회.
+#    모델 전환·재시도까지 전부 이 횟수에 포함되며, 상한에 닿으면 중단한다.
 #  - 오늘 문서가 이미 있으면 Gemini를 한 번도 부르지 않고 종료한다
 #    (워크플로우의 '확인 실행'이 공짜로 동작하는 이유).
 #  - 원문 본문 수집은 일반 HTTP라 API 비용이 없고, 프롬프트에 넣는
 #    본문 길이를 잘라 입력 토큰 증가도 제한한다.
+#  - 모델은 1-1절의 후보 목록(고정 1순위 + 허용 목록)을 순서대로 쓴다.
 MAX_GEMINI_CALLS = 12
 _gemini_call_count = 0
 
 class QuotaExceededError(Exception):
-    """Gemini 무료 쿼터 초과(429) 또는 자체 호출 상한 도달 시 발생."""
+    """모든 후보 모델을 쓸 수 없거나 자체 호출 상한에 도달했을 때 발생."""
+
+def _classify_gemini_error(e):
+    """Gemini 오류를 대응 방식별로 분류한다."""
+    msg = str(e)
+    if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
+        return "quota"
+    if "404" in msg or "NOT_FOUND" in msg:
+        return "not_found"
+    if "503" in msg or "UNAVAILABLE" in msg:
+        return "unavailable"
+    return "other"
 
 def call_gemini(contents, config=None):
-    """모든 Gemini 호출의 단일 통로. 호출 횟수를 세고 429를 구분한다."""
-    global _gemini_call_count
-    if _gemini_call_count >= MAX_GEMINI_CALLS:
-        raise QuotaExceededError(
-            f"실행당 Gemini 호출 상한({MAX_GEMINI_CALLS}회)에 도달해 중단합니다.")
-    _gemini_call_count += 1
-    try:
-        return client.models.generate_content(
-            model=SELECTED_MODEL, contents=contents, config=config)
-    except Exception as e:
-        msg = str(e)
-        if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
-            raise QuotaExceededError(f"Gemini 무료 쿼터 초과: {msg[:200]}") from e
-        raise
+    """모든 Gemini 호출의 단일 통로.
+
+    - 호출 횟수를 세어 실행당 상한(MAX_GEMINI_CALLS)을 지킨다.
+    - 503(일시 과부하): 같은 모델로 한 번 더 시도한다.
+    - 429(쿼터)·404(모델 없음): 다음 후보 모델로 내려가 시도한다.
+      후보가 더 없으면 QuotaExceededError로 실행을 중단한다(부분 발행 방지).
+    """
+    global _gemini_call_count, _model_index
+    retried_unavailable = False
+    while True:
+        if _gemini_call_count >= MAX_GEMINI_CALLS:
+            raise QuotaExceededError(
+                f"실행당 Gemini 호출 상한({MAX_GEMINI_CALLS}회)에 도달해 중단합니다.")
+        _gemini_call_count += 1
+        model = MODEL_CANDIDATES[_model_index]
+        try:
+            return client.models.generate_content(
+                model=model, contents=contents, config=config)
+        except Exception as e:
+            kind = _classify_gemini_error(e)
+            if kind in ("quota", "not_found"):
+                if _model_index + 1 < len(MODEL_CANDIDATES):
+                    _model_index += 1
+                    print(f"  🔀 모델 {model} 사용 불가({kind}) → 다음 후보 "
+                          f"{MODEL_CANDIDATES[_model_index]}로 전환합니다.")
+                    retried_unavailable = False
+                    continue
+                raise QuotaExceededError(
+                    f"사용 가능한 후보 모델이 없습니다. 마지막 오류: {str(e)[:200]}") from e
+            if kind == "unavailable" and not retried_unavailable:
+                retried_unavailable = True
+                print(f"  ⚠️ 모델 {model} 일시 과부하(503) — 같은 모델로 재시도합니다.")
+                time.sleep(5)
+                continue
+            raise
 
 BROWSER_UA = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -79,46 +113,52 @@ if not firebase_admin._apps:
 db = firestore.client(database_id="headline-news-d6a13")
 
 # ==========================================
-# 1-1. 최신 Flash-Lite 모델 자동 감지
+# 1-1. 모델 후보 목록 (고정 1순위 + 허용 목록 폴백)
 # ==========================================
-def get_latest_lite_model(client):
-    """
-    사용 가능한 Gemini 모델 중 'flash-lite' 계열(텍스트 생성용)의 최신 버전을 자동으로 찾아 반환.
-    예: gemini-3.5-flash-lite, gemini-3.6-flash-lite 등이 새로 나와도 코드 수정 없이 자동 대응.
+# 💡 정책 (2026-11-15):
+#  - 1순위는 무료로 검증된 모델로 고정한다. 새 모델이 나와도 자동 승격하지 않는다.
+#  - 429(쿼터)·404(모델 없음)일 때만 아래 허용 목록 순서대로 내려간다.
+#  - 자동 감지는 허용 패턴(gemini-X.Y-flash-lite 로 정확히 끝나는 이름)에 맞는
+#    새 모델을 후보 맨 뒤에 보충하는 용도로만 쓴다. -tts/-image 같은 변종은
+#    JSON 모드 미지원·별도 쿼터 문제로 반드시 제외한다.
+#  - 무료 여부는 API로 판정할 수 없으므로, 이 목록 자체가 허용 범위다.
+#    모델을 1순위로 올리려면 사람이 검증한 뒤 이 목록의 순서를 직접 바꾼다.
+MODEL_ALLOWLIST = [
+    "gemini-3.5-flash-lite",  # 1순위 — 검증됨 (2026-11-14~15 실제 발행에 사용)
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
+]
 
-    💡 정확히 "gemini-X.Y-flash-lite" 형태로 '끝나는' 모델명만 인정.
-    (gemini-3.8-flash-lite-tts 같은 음성 합성 전용 변종은 JSON 모드 미지원 +
-     별도의 매우 낮은 무료 쿼터를 가지므로 반드시 제외해야 함)
+def build_model_candidates(client):
+    """허용 목록 순서 + 감지된 신규 lite 모델(맨 뒤)로 후보 목록을 구성한다.
 
-    조회 실패 시 안전한 기본값으로 폴백.
+    모델 목록 조회가 되면 허용 목록 중 실제 존재하는 것만 남기고,
+    조회에 실패하면 허용 목록을 그대로 쓴다.
     """
-    fallback = "gemini-3.5-flash-lite"
     try:
-        candidates = []
-        for m in client.models.list():
-            name = m.name.replace("models/", "")
-            # "gemini-숫자.숫자-flash-lite"로 정확히 끝나는 것만 허용 (뒤에 -tts, -image 등 접미사 붙은 변종 제외)
-            match = re.fullmatch(r"gemini-(\d+)\.(\d+)-flash-lite", name)
-            if match:
-                # float으로 비교하면 3.10이 3.1로 오판되므로 (major, minor) 튜플로 비교
-                version = (int(match.group(1)), int(match.group(2)))
-                candidates.append((version, name))
-
-        if candidates:
-            candidates.sort(reverse=True)  # 버전 높은 순 정렬
-            latest_version, latest_name = candidates[0]
-            print(f"✅ 최신 Flash-Lite 모델 감지: {latest_name}")
-            return latest_name
-        else:
-            print(f"⚠️ Flash-Lite 계열 모델을 찾지 못해 기본값 사용: {fallback}")
-            return fallback
-
+        available = {m.name.replace("models/", "") for m in client.models.list()}
     except Exception as e:
-        print(f"⚠️ 모델 목록 조회 실패, 기본값 사용: {fallback} ({e})")
-        return fallback
+        print(f"⚠️ 모델 목록 조회 실패, 허용 목록 그대로 사용: {e}")
+        return list(MODEL_ALLOWLIST)
 
-# 스크립트 시작 시 1회만 조회 (매번 API 호출하면 비효율)
-SELECTED_MODEL = get_latest_lite_model(client)
+    candidates = [name for name in MODEL_ALLOWLIST if name in available]
+    if not candidates:
+        print("⚠️ 허용 목록 모델이 조회 목록에 없어 허용 목록 그대로 사용합니다.")
+        candidates = list(MODEL_ALLOWLIST)
+
+    extras = []
+    for name in available:
+        match = re.fullmatch(r"gemini-(\d+)\.(\d+)-flash-lite", name)
+        if match and name not in candidates:
+            extras.append(((int(match.group(1)), int(match.group(2))), name))
+    extras.sort(reverse=True)
+    if extras:
+        print(f"ℹ️ 감지된 신규 lite 모델을 후보 맨 뒤에 보충: {[n for _, n in extras]}")
+    return candidates + [name for _, name in extras]
+
+MODEL_CANDIDATES = build_model_candidates(client)
+_model_index = 0
+print(f"🧠 모델 후보 목록: {MODEL_CANDIDATES}")
 
 # ==========================================
 # 2. 요일별 테마 및 뉴스 검색 로직
@@ -569,7 +609,8 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
 # ==========================================
 def main():
     print("📰 어린이 헤드라인 뉴스 AI 자동 생성 스크립트 시작...")
-    print(f"🧠 사용 모델: {SELECTED_MODEL}")
+    print(f"🧠 사용 모델: {MODEL_CANDIDATES[_model_index]} "
+          f"(후보 {len(MODEL_CANDIDATES)}개, 쿼터·모델 오류 시 순서대로 전환)")
 
     kst = pytz.timezone('Asia/Seoul')
     today_str = datetime.datetime.now(kst).strftime("%Y-%m-%d")
