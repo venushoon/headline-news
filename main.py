@@ -550,7 +550,9 @@ def _body_metrics(paragraph_texts):
 # ==========================================
 # 학년별 본문 구성·난이도 기준 (2026-11-15: 3~4학년 3문단, 5~6학년 4문단 + 난이도 차등)
 # level_rules는 프롬프트에 그대로 들어가고, check는 검증에서 기계적으로 거르는 하드 bound다
-# (프롬프트 목표보다 넓게 잡아 재시도 폭증을 막는다).
+# (프롬프트 목표보다 넓게 잡아 재시도 폭증을 막는다. 특히 분량 하한은 짧은 원문에서
+#  '사실 엄수' 규칙과 충돌하므로, 퇴화한 출력만 거르는 수준으로 낮게 둔다 —
+#  2026-11-15 CJ 기사 5~6학년판이 원문 분량 한계로 2회 다 탈락해 건너뛰어진 사례.)
 GRADE_SPECS = {
     "3-4": {
         "count": 3,
@@ -563,7 +565,7 @@ GRADE_SPECS = {
             "기관·단체의 긴 공식 이름은 짧게 줄여 쓴다.",
         ],
         "total_range": (450, 600),
-        "check": {"max_sent": 100, "max_avg_sent": 65, "min_total": 350, "max_total": 800},
+        "check": {"max_sent": 100, "max_avg_sent": 65, "min_total": 300, "max_total": 800},
     },
     "5-6": {
         "count": 4,
@@ -575,7 +577,7 @@ GRADE_SPECS = {
             "사실의 배경과 원인, 앞으로 미칠 영향까지 포함해 한 단계 깊게 설명한다.",
         ],
         "total_range": (650, 850),
-        "check": {"max_sent": 140, "max_avg_sent": 95, "min_total": 520, "max_total": 1100},
+        "check": {"max_sent": 140, "max_avg_sent": 95, "min_total": 420, "max_total": 1100},
     },
 }
 
