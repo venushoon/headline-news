@@ -28,7 +28,7 @@ from google.genai import types
 #  - 원문 본문 수집은 일반 HTTP라 API 비용이 없고, 프롬프트에 넣는
 #    본문 길이를 잘라 입력 토큰 증가도 제한한다.
 #  - 모델은 1-1절의 후보 목록(고정 1순위 + 허용 목록)을 순서대로 쓴다.
-MAX_GEMINI_CALLS = 12
+MAX_GEMINI_CALLS = 16  # 2026-11-18: 12→16 (503 재시도가 예산을 태워 뒤 기사가 굶는 사례; flash-lite 무료 한도는 모델당 500회/일이라 여유 충분)
 _gemini_call_count = 0
 
 class QuotaExceededError(Exception):
@@ -545,6 +545,26 @@ def _body_metrics(paragraph_texts):
     lens = [len(s) for s in sents]
     return total, sum(lens) / len(lens), max(lens)
 
+def _fails_only_on_min_total(data, expected_paragraphs, check):
+    """
+    구조·문단 수·문장 길이는 모두 합격인데 총 분량 하한만 미달한 경우인지.
+    마지막 시도에서 이 경우만 채택해, 짧은 원문 기사가 통째로 빠지는 것을 막는다
+    (2026-11-18 한·호주 5~6학년판 누락 사례). 단, 하한의 70% 미만이면
+    퇴화한 출력으로 보고 채택하지 않는다.
+    """
+    if not data or not data.get("title") or not data.get("lede"):
+        return False
+    body = data.get("body")
+    if not body or not isinstance(body, list):
+        return False
+    valid = [b for b in body if isinstance(b, dict) and b.get("p") and len(b["p"].strip()) > 5]
+    if len(valid) != expected_paragraphs:
+        return False
+    total, avg_sent, max_sent = _body_metrics([b["p"] for b in valid])
+    if max_sent > check["max_sent"] or avg_sent > check["max_avg_sent"] or total > check["max_total"]:
+        return False
+    return int(check["min_total"] * 0.7) <= total < check["min_total"]
+
 # ==========================================
 # 4. 제미나이(Gemini) AI 기사 '변환' 로직
 # ==========================================
@@ -650,6 +670,10 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             data = normalize_article_body(data)
 
             if is_valid_article(data, expected_paragraphs=target_count, level_check=spec["check"]):
+                return data
+            elif attempt == max_retries and _fails_only_on_min_total(data, target_count, spec["check"]):
+                total_chars = sum(len(b["p"]) for b in data["body"] if isinstance(b, dict) and b.get("p"))
+                print(f"  ⚠️ 마지막 시도: 총 분량만 하한({spec['check']['min_total']}자)에 미달(총 {total_chars}자) — 기사 누락 방지를 위해 채택합니다.")
                 return data
             else:
                 print(f"  ⚠️ 본문이 비었거나 문단 수(목표 {target_count}개)·난이도 기준과 다른 응답 (시도 {attempt}/{max_retries}) - 재시도합니다.")
