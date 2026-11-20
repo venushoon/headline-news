@@ -376,10 +376,10 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex flex-col md:flex-row md:flex-wrap md:justify-between md:items-center gap-3 mt-6 pt-4 border-t border-gray-200 font-sans">
-            <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
+          <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3 md:gap-2 mt-6 pt-4 border-t border-gray-200 font-sans">
+            <div className="flex items-center justify-center md:justify-start gap-1.5 flex-nowrap">
               <button onClick={() => handleDateChange(-1)} className="px-2.5 py-1 bg-gray-100 border border-gray-300 rounded text-xs hover:bg-gray-200 cursor-pointer">◀ 어제</button>
-              <span className="font-bold text-sm px-1">{currentDate} ({getDayOfWeek(currentDate)})</span>
+              <span className="font-bold text-sm px-1 whitespace-nowrap">{currentDate} ({getDayOfWeek(currentDate)})</span>
               <button
                 onClick={() => handleDateChange(1)}
                 disabled={!currentDate || currentDate >= getTodayString()}
@@ -399,13 +399,13 @@ export default function App() {
                     fetchBriefing(todayStr);
                   }
                 }}
-                className="ml-1 px-3 py-1 bg-gray-800 text-white hover:bg-gray-700 rounded text-xs transition cursor-pointer"
+                className="ml-0.5 px-2.5 py-1 bg-gray-800 text-white hover:bg-gray-700 rounded text-xs transition cursor-pointer whitespace-nowrap"
               >
                 {viewMode === 'today' ? '📚 지난 기사 모아보기' : '📰 오늘의 뉴스'}
               </button>
             </div>
 
-            <div className="flex items-center justify-center md:justify-end gap-3 md:gap-4 flex-wrap">
+            <div className="flex items-center justify-center md:justify-end gap-2 md:gap-2.5 flex-nowrap">
               <div className="flex items-center gap-1.5 text-xs text-gray-600">
                 <span>가</span>
                 <input 
@@ -414,7 +414,7 @@ export default function App() {
                   max="22" 
                   value={fontSize} 
                   onChange={(e) => setFontSize(Number(e.target.value))}
-                  className="w-16 sm:w-20 accent-gray-800 cursor-pointer"
+                  className="w-14 sm:w-16 accent-gray-800 cursor-pointer"
                 />
                 <span>가</span>
               </div>
@@ -424,7 +424,7 @@ export default function App() {
                 placeholder="🔍 기사 검색..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="border border-gray-300 rounded px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-800 w-28 sm:w-32 md:w-40"
+                className="border border-gray-300 rounded px-3 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-800 w-24 sm:w-28 md:w-32 lg:w-36"
               />
 
               <button 
