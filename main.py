@@ -1,5 +1,7 @@
 import os
 import re
+import sys
+import html
 import io
 import csv
 import json
@@ -184,7 +186,7 @@ def _clean_snippet(html_text):
     if not html_text:
         return ""
     text = re.sub(r"<[^>]+>", " ", html_text)
-    text = text.replace("&nbsp;", " ").replace("&quot;", '"').replace("&amp;", "&")
+    text = html.unescape(text)  # &nbsp; &quot; &#39; &lt; 등 모든 엔티티를 한 번에 디코딩
     return " ".join(text.split())
 
 def fetch_news_by_query(query, limit=10):
@@ -348,6 +350,17 @@ def enrich_articles_with_fulltext(articles):
 # 3. 성취기준 CSV 불러오기 
 # ==========================================
 def fetch_standards_csv():
+    # 저장소 루트에 파일이 동봉돼 있고 워크플로우가 repo를 체크아웃하므로 로컬을 먼저 읽는다.
+    # 원격(GitHub Raw)은 로컬 파일이 없을 때만 쓰는 폴백이다.
+    local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "2026list.csv")
+    try:
+        with open(local_path, encoding="utf-8") as f:
+            local_data = f.read()
+        if local_data.strip():
+            print("📄 로컬 파일에서 성취기준(2026list.csv)을 불러왔습니다.")
+            return local_data
+    except FileNotFoundError:
+        pass
     url = "https://raw.githubusercontent.com/venushoon/headline-news/refs/heads/main/2026list.csv"
     try:
         print("🌐 깃허브에서 성취기준(2026list.csv)을 불러오는 중...")
@@ -476,7 +489,13 @@ def select_best_articles_for_kids(articles, theme_name, pick_count=2):
         )
         result = json.loads(response.text)
         indices = result.get("selected_indices", [])
-        selected = [articles[i] for i in indices if 0 <= i < len(articles)]
+        seen = set()
+        selected = []
+        for i in indices:
+            # 정수가 아닌 값은 건너뛰고, 중복 인덱스는 한 번만 (같은 기사가 1면·2면에 중복 발행되는 것 방지)
+            if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < len(articles) and i not in seen:
+                seen.add(i)
+                selected.append(articles[i])
         if len(selected) >= 1:
             print(f"✅ AI가 선정한 기사 {len(selected)}개 (후보 {len(articles)}개 중)")
             return selected[:pick_count]
@@ -649,8 +668,8 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             {{"code": "코드", "gloss": "내용"}}
         ],
         "source": {{
-            "name": "{article_data.get('source_name') or '구글 뉴스'}",
-            "url": "{article_data.get('original_url') or article_data['link']}"
+            "name": "언론사명",
+            "url": "원문 주소"
         }},
         "grade": "{grade_value}"
     }}
@@ -669,6 +688,11 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             )
             data = json.loads(response.text)
             data = normalize_article_body(data)
+            # 출처는 모델 응답을 믿지 않고 원본 데이터로 직접 주입한다 (URL 변형·JSON 깨짐 방지)
+            data["source"] = {
+                "name": article_data.get('source_name') or '구글 뉴스',
+                "url": article_data.get('original_url') or article_data['link'],
+            }
 
             if is_valid_article(data, expected_paragraphs=target_count, level_check=spec["check"]):
                 return data
@@ -788,6 +812,8 @@ def run_pipeline(today_str):
         print("🎉 업로드 완료! React 앱을 새로고침하여 확인해 보세요.")
     else:
         print("⚠️ 업로드할 기사가 생성되지 않았습니다.")
+        # 성공으로 끝내면 [발행 실패] 이슈 자동 생성이 동작하지 않아 조용한 실패가 되므로 비정상 종료한다
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
