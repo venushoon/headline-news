@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 // 💡 서버 사이드 최적화를 위한 query, orderBy, limit 다시 추가
 import { collection, getDocs, doc, getDoc, query, orderBy, limit } from 'firebase/firestore';
 // Firebase 초기화는 firebase.js 한 곳에서만 한다
@@ -20,7 +20,9 @@ const formatDateStr = (d) => {
 
 // 현재 날짜 가져오기
 const getTodayString = () => {
-  return formatDateStr(new Date());
+  // 발행 기준(Asia/Seoul)과 맞추기 위해 브라우저 시간대와 무관하게 서울 날짜를 쓴다
+  const seoulNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  return formatDateStr(seoulNow);
 };
 
 export default function App() {
@@ -62,13 +64,17 @@ export default function App() {
     setCurrentArticleIndex(0);
   }, [currentDate, selectedGrade, searchTerm]);
 
+  // 날짜를 빠르게 연속 이동하면 응답이 순서 없이 도착할 수 있어, 최신 요청만 반영한다
+  const fetchSeqRef = useRef(0);
   const fetchBriefing = async (dateStr) => {
     if (!db) return;
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     setFetchError('');
     try {
       const docRef = doc(db, 'daily_briefings', dateStr);
       const docSnap = await getDoc(docRef);
+      if (seq !== fetchSeqRef.current) return; // 더 최신 요청이 나갔으면 이 응답은 버린다
       if (docSnap.exists()) {
         setBriefingExists(true);
         setArticles(docSnap.data().articles || []);
@@ -77,12 +83,13 @@ export default function App() {
         setArticles([]);
       }
     } catch (error) {
+      if (seq !== fetchSeqRef.current) return;
       console.error("데이터 로드 실패:", error);
       setFetchError(error.message || "데이터를 불러오지 못했습니다.");
       setBriefingExists(null);
       setArticles([]);
     }
-    setLoading(false);
+    if (seq === fetchSeqRef.current) setLoading(false);
   };
 
   // 아카이브 목록이 아직 없으면 불러오고, 있으면 그대로 반환 (뷰 모드는 바꾸지 않음)
