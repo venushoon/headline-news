@@ -656,6 +656,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
     }}
     """
 
+    fallback_candidate = None  # 총 분량만 미달한 응답의 보관함 (아래 루프 참조)
     for attempt in range(1, max_retries + 1):
         response = None
         try:
@@ -671,11 +672,13 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
 
             if is_valid_article(data, expected_paragraphs=target_count, level_check=spec["check"]):
                 return data
-            elif attempt == max_retries and _fails_only_on_min_total(data, target_count, spec["check"]):
-                total_chars = sum(len(b["p"]) for b in data["body"] if isinstance(b, dict) and b.get("p"))
-                print(f"  ⚠️ 마지막 시도: 총 분량만 하한({spec['check']['min_total']}자)에 미달(총 {total_chars}자) — 기사 누락 방지를 위해 채택합니다.")
-                return data
             else:
+                # 총 분량만 미달한 응답은 예비로 보관해 둔다. 이후 시도가 오류(503 등)로
+                # 응답 없이 끝나도, 합격 응답이 끝내 없으면 보관본을 채택해 기사 누락을 막는다
+                # (2026-11-20 울산항 3~4학년판: 1차 281자 미달 → 2차 503 무응답으로 건너뛰어진 사례).
+                if _fails_only_on_min_total(data, target_count, spec["check"]):
+                    fallback_candidate = data
+                    print(f"  📥 총 분량만 미달한 응답이라 예비로 보관합니다 (시도 {attempt}/{max_retries}).")
                 print(f"  ⚠️ 본문이 비었거나 문단 수(목표 {target_count}개)·난이도 기준과 다른 응답 (시도 {attempt}/{max_retries}) - 재시도합니다.")
                 print(f"  🔎 [디버그] 실제 응답 데이터: {json.dumps(data, ensure_ascii=False)[:500]}")
 
@@ -690,6 +693,10 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             except Exception:
                 pass
 
+    if fallback_candidate is not None:
+        total_chars = sum(len(b["p"]) for b in fallback_candidate["body"] if isinstance(b, dict) and b.get("p"))
+        print(f"  ⚠️ 합격 응답은 없었지만, 총 분량만 미달한 보관 응답(총 {total_chars}자)을 기사 누락 방지를 위해 채택합니다.")
+        return fallback_candidate
     print(f"  ❌ {max_retries}회 시도 후에도 정상 기사를 생성하지 못해 이 기사({grade_text})는 건너뜁니다.")
     return None
 
