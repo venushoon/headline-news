@@ -23,7 +23,9 @@ from google.genai import types
 # ==========================================
 # 💡 무료 범위 보장 장치 (신문 발행은 Gemini 무료 등급 안에서만 동작):
 #  - 하루 실행당 Gemini 호출 횟수 상한. 기사 선정(1)
-#    + 재작성(기사 2개 × 학년 2개 × 최대 재시도 2회 = 최대 8) = 최대 9회.
+#    + 재작성(기사 2개 × 학년 2개 × 기본 재시도 2회 = 최대 8) = 최대 9회가 기본.
+#    문단 수 부족으로만 탈락한 판은 최대 4회까지 더 시도할 수 있으나
+#    (EXTENDED_MAX_ATTEMPTS), 전체 호출 상한(16회)이 최종 가드다.
 #    모델 전환·재시도까지 전부 이 횟수에 포함되며, 상한에 닿으면 중단한다.
 #  - 오늘 문서가 이미 있으면 Gemini를 한 번도 부르지 않고 종료한다
 #    (워크플로우의 '확인 실행'이 공짜로 동작하는 이유).
@@ -31,6 +33,7 @@ from google.genai import types
 #    본문 길이를 잘라 입력 토큰 증가도 제한한다.
 #  - 모델은 1-1절의 후보 목록(고정 1순위 + 허용 목록)을 순서대로 쓴다.
 MAX_GEMINI_CALLS = 16  # 2026-11-18: 12→16 (503 재시도가 예산을 태워 뒤 기사가 굶는 사례; flash-lite 무료 한도는 모델당 500회/일이라 여유 충분)
+EXTENDED_MAX_ATTEMPTS = 4  # 2026-11-21: 문단 수 부족(빈 문단 등)으로만 탈락한 판의 시도 상한 (기본 2회 → 4회; 실행 #128 5~6학년판 누락 사례)
 _gemini_call_count = 0
 
 class QuotaExceededError(Exception):
@@ -584,6 +587,112 @@ def _fails_only_on_min_total(data, expected_paragraphs, check):
         return False
     return int(check["min_total"] * 0.7) <= total < check["min_total"]
 
+def _is_valid_paragraph(item):
+    """본문 항목 하나가 유효 문단인지 (is_valid_article의 문단 판정과 같은 기준)."""
+    if not isinstance(item, dict):
+        return False
+    text = item.get("p")
+    return isinstance(text, str) and len(text.strip()) > 5
+
+def _validation_failure(data, expected_paragraphs, check):
+    """
+    is_valid_article에서 탈락한 응답의 구체 사유를 계산한다 (검증 기준 자체는 바꾸지 않는다).
+    반환: (사유 문장 목록, 문단 수 부족뿐인지 여부, 다음 시도 프롬프트용 피드백 한 줄)
+
+    사유는 (a) 유효 문단 수 부족 — 몇 번째 문단이 비었는지/짧은지 포함,
+    (b) 문장 길이 bound 위반(최장·평균), (c) 총 분량 범위 이탈(실제 총 글자수 병기)로 나눈다.
+    단, (c)의 하한 미달은 문단이 빠져서 생긴 것일 수 있어, 있는 문단들의 밀도로 환산한
+    예상 총량(총량 × 목표 문단 수 ÷ 유효 문단 수)이 하한 이상이면 독립 사유로 세지 않는다
+    — 그 경우 탈락의 실질 원인은 문단 부족뿐이다.
+    (2026-11-21 실행 #128: 5~6학년판 네 번째 문단이 빈 문자열이라 유효 문단 3개로 탈락.)
+    """
+    ordinal = ["첫 번째", "두 번째", "세 번째", "네 번째", "다섯 번째", "여섯 번째"]
+    def nth(i):
+        return ordinal[i] if i < len(ordinal) else f"{i + 1}번째"
+
+    if not data or not data.get("title") or not data.get("lede"):
+        return ["제목이나 리드가 비어 있음"], False, (
+            "이전 응답의 문제: 제목이나 리드가 비어 있었습니다. 제목과 리드를 반드시 채우세요.")
+    body = data.get("body")
+    if not body or not isinstance(body, list):
+        return ["본문(body)이 없거나 목록이 아님"], False, (
+            "이전 응답의 문제: 본문이 비어 있었습니다. 본문을 반드시 채우세요.")
+
+    valid_texts = [b["p"] for b in body if _is_valid_paragraph(b)]
+    reasons = []
+    feedback_parts = []
+    paragraph_only = False
+
+    if expected_paragraphs is not None and len(valid_texts) != expected_paragraphs:
+        problems = []
+        for idx, item in enumerate(body):
+            if _is_valid_paragraph(item):
+                continue
+            text = item.get("p") if isinstance(item, dict) else None
+            if not isinstance(text, str) or not text.strip():
+                problems.append(f"{nth(idx)} 문단이 비어 있음")
+            else:
+                problems.append(f"{nth(idx)} 문단이 너무 짧음({len(text.strip())}자)")
+        if len(body) < expected_paragraphs:
+            problems.append(f"본문 항목 자체가 {len(body)}개뿐")
+        total_now = sum(len(t) for t in valid_texts)
+        reasons.append(
+            f"유효 문단 {len(valid_texts)}개 (목표 {expected_paragraphs}개) — "
+            + ("; ".join(problems) if problems else "문단 수 불일치")
+            + f" (현재 총 {total_now}자)")
+        if len(valid_texts) < expected_paragraphs:
+            paragraph_only = True
+            first_bad_idx = next(
+                (idx for idx, item in enumerate(body) if not _is_valid_paragraph(item)), None)
+            if first_bad_idx is not None:
+                feedback_parts.append(
+                    f"이전 응답의 문제: {nth(first_bad_idx)} 문단이 비어 있었습니다. "
+                    f"반드시 {expected_paragraphs}개 문단을 모두 완성된 문장으로 채우세요.")
+            else:
+                feedback_parts.append(
+                    f"이전 응답의 문제: 문단이 {len(valid_texts)}개뿐이었습니다. "
+                    f"반드시 {expected_paragraphs}개 문단을 모두 완성된 문장으로 채우세요.")
+        else:
+            feedback_parts.append(
+                f"이전 응답의 문제: 문단이 {len(valid_texts)}개로 너무 많았습니다. "
+                f"반드시 {expected_paragraphs}개 문단으로 맞추세요.")
+
+    sentence_bad = False
+    total_bad = False
+    if check:
+        total, avg_sent, max_sent = _body_metrics(valid_texts)
+        if max_sent > check["max_sent"]:
+            sentence_bad = True
+            reasons.append(f"문장 길이 위반: 최장 문장 {max_sent}자 (기준 {check['max_sent']}자 이하)")
+            feedback_parts.append(
+                f"한 문장이 너무 깁니다(최장 {max_sent}자). "
+                f"한 문장을 {check['max_sent']}자 이하로 짧게 나누어 쓰세요.")
+        if avg_sent > check["max_avg_sent"]:
+            sentence_bad = True
+            reasons.append(f"문장 길이 위반: 평균 문장 {avg_sent:.0f}자 (기준 {check['max_avg_sent']}자 이하)")
+            feedback_parts.append(
+                f"문장이 전반적으로 깁니다(평균 {avg_sent:.0f}자). 한 문장을 더 짧게 나누어 쓰세요.")
+        if total > check["max_total"]:
+            total_bad = True
+            reasons.append(f"총 분량 초과: 총 {total}자 (기준 {check['min_total']}~{check['max_total']}자)")
+            feedback_parts.append(
+                f"본문 전체 분량이 너무 많습니다(총 {total}자). {check['max_total']}자 이하로 줄여 쓰세요.")
+        elif total < check["min_total"]:
+            # 문단이 빠져서 모자란 것인지, 있는 문단 자체가 얇은지 구분한다
+            projected = (total * expected_paragraphs / len(valid_texts)) if (
+                expected_paragraphs and valid_texts) else 0
+            if not (paragraph_only and projected >= check["min_total"]):
+                total_bad = True
+                reasons.append(f"총 분량 부족: 총 {total}자 (기준 {check['min_total']}~{check['max_total']}자)")
+                feedback_parts.append(
+                    f"본문 전체 분량이 부족합니다(총 {total}자). "
+                    f"각 문단을 조금 더 자세히 풀어 {check['min_total']}자 이상으로 쓰세요.")
+    if sentence_bad or total_bad:
+        paragraph_only = False
+    feedback = " ".join(feedback_parts) if feedback_parts else (
+        "이전 응답의 문제: 기사 형식 기준에 맞지 않았습니다. 작성 규칙을 다시 확인해 쓰세요.")
+    return reasons, paragraph_only, feedback
+
 # ==========================================
 # 4. 제미나이(Gemini) AI 기사 '변환' 로직
 # ==========================================
@@ -676,11 +785,28 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
     """
 
     fallback_candidate = None  # 총 분량만 미달한 응답의 보관함 (아래 루프 참조)
-    for attempt in range(1, max_retries + 1):
+    last_feedback = None  # 다음 시도 프롬프트 끝에 붙일 직전 탈락 사유 한 줄
+    only_paragraph_failures = True  # 지금까지의 검증 탈락이 전부 문단 수 부족뿐인지
+    attempt = 0
+    # 기본은 max_retries회까지. 탈락이 문단 수 부족뿐이면 EXTENDED_MAX_ATTEMPTS회까지 늘어난다
+    # (2026-11-21 실행 #128: 빈 문단으로 2회 다 탈락해 5~6학년판이 누락된 사례).
+    while attempt < max_retries or (only_paragraph_failures and attempt < EXTENDED_MAX_ATTEMPTS):
+        attempt += 1
+        cap = EXTENDED_MAX_ATTEMPTS if attempt > max_retries else max_retries
+        if attempt > max_retries:
+            # 확장 시도는 호출 상한 여유가 있을 때만 한다. 상한에 닿으면
+            # 이 판만 건너뛰고 실행 전체는 계속한다 (쿼터 중단과 다름).
+            if _gemini_call_count >= MAX_GEMINI_CALLS:
+                print(f"  ⚠️ 호출 상한({MAX_GEMINI_CALLS}회)에 도달해 추가 시도를 멈춥니다.")
+                break
+            print(f"  ↪ 문단 수 부족만으로 탈락해 시도를 계속합니다 (시도 {attempt}/{EXTENDED_MAX_ATTEMPTS}).")
+        # 2회차부터는 직전 탈락 사유를 프롬프트 끝에 붙여 같은 실수를 피하게 한다
+        attempt_prompt = prompt if last_feedback is None else (
+            prompt + f"\n\n[재작성 시 반드시 고칠 점]\n{last_feedback}")
         response = None
         try:
             response = call_gemini(
-                prompt,
+                attempt_prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     max_output_tokens=4096  # 응답이 중간에 잘려 본문이 비는 것을 방지
@@ -696,20 +822,36 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
 
             if is_valid_article(data, expected_paragraphs=target_count, level_check=spec["check"]):
                 return data
-            else:
-                # 총 분량만 미달한 응답은 예비로 보관해 둔다. 이후 시도가 오류(503 등)로
-                # 응답 없이 끝나도, 합격 응답이 끝내 없으면 보관본을 채택해 기사 누락을 막는다
-                # (2026-11-20 울산항 3~4학년판: 1차 281자 미달 → 2차 503 무응답으로 건너뛰어진 사례).
-                if _fails_only_on_min_total(data, target_count, spec["check"]):
-                    fallback_candidate = data
-                    print(f"  📥 총 분량만 미달한 응답이라 예비로 보관합니다 (시도 {attempt}/{max_retries}).")
-                print(f"  ⚠️ 본문이 비었거나 문단 수(목표 {target_count}개)·난이도 기준과 다른 응답 (시도 {attempt}/{max_retries}) - 재시도합니다.")
-                print(f"  🔎 [디버그] 실제 응답 데이터: {json.dumps(data, ensure_ascii=False)[:500]}")
+
+            reasons, paragraph_only, feedback = _validation_failure(
+                data, target_count, spec["check"])
+            if not paragraph_only:
+                only_paragraph_failures = False
+            # 총 분량만 미달한 응답은 예비로 보관해 둔다. 이후 시도가 오류(503 등)로
+            # 응답 없이 끝나도, 합격 응답이 끝내 없으면 보관본을 채택해 기사 누락을 막는다
+            # (2026-11-20 울산항 3~4학년판: 1차 281자 미달 → 2차 503 무응답으로 건너뛰어진 사례).
+            if _fails_only_on_min_total(data, target_count, spec["check"]):
+                fallback_candidate = data
+                print(f"  📥 총 분량만 미달한 응답이라 예비로 보관합니다 (시도 {attempt}/{cap}).")
+            will_retry = attempt < max_retries or (
+                only_paragraph_failures and attempt < EXTENDED_MAX_ATTEMPTS)
+            print(f"  ⚠️ 검증 탈락 (시도 {attempt}/{cap}): {'; '.join(reasons)}"
+                  + (" - 재시도합니다." if will_retry else ""))
+            print(f"  🔎 [디버그] 실제 응답 데이터: {json.dumps(data, ensure_ascii=False)[:500]}")
+            last_feedback = feedback
 
         except QuotaExceededError:
+            # 확장 시도 중 호출 상한에 닿은 경우만 이 판을 건너뛰고,
+            # 그 외(기본 시도 구간·모델 소진)는 기존대로 실행 전체를 중단한다.
+            if attempt > max_retries and _gemini_call_count >= MAX_GEMINI_CALLS:
+                print(f"  ⚠️ 호출 상한({MAX_GEMINI_CALLS}회)에 도달해 이 기사({grade_text})는 건너뜁니다.")
+                break
             raise  # 쿼터 초과 시 재시도로 호출을 더 태우지 않고 즉시 중단
         except Exception as e:
-            print(f"  ⚠️ AI 생성 또는 JSON 파싱 에러 발생 ({grade_text}용, 시도 {attempt}/{max_retries}): {e}")
+            only_paragraph_failures = False
+            last_feedback = ("이전 응답의 문제: JSON 형식이 깨져 읽을 수 없었습니다. "
+                             "지정된 JSON 형식 그대로만 답하세요.")
+            print(f"  ⚠️ AI 생성 또는 JSON 파싱 에러 발생 ({grade_text}용, 시도 {attempt}/{cap}): {e}")
             try:
                 finish_reason = response.candidates[0].finish_reason if response else "알 수 없음"
                 print(f"  🔎 [디버그] finish_reason: {finish_reason}")
@@ -721,7 +863,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
         total_chars = sum(len(b["p"]) for b in fallback_candidate["body"] if isinstance(b, dict) and b.get("p"))
         print(f"  ⚠️ 합격 응답은 없었지만, 총 분량만 미달한 보관 응답(총 {total_chars}자)을 기사 누락 방지를 위해 채택합니다.")
         return fallback_candidate
-    print(f"  ❌ {max_retries}회 시도 후에도 정상 기사를 생성하지 못해 이 기사({grade_text})는 건너뜁니다.")
+    print(f"  ❌ {attempt}회 시도 후에도 정상 기사를 생성하지 못해 이 기사({grade_text})는 건너뜁니다.")
     return None
 
 # ==========================================
