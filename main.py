@@ -567,12 +567,15 @@ def _body_metrics(paragraph_texts):
     lens = [len(s) for s in sents]
     return total, sum(lens) / len(lens), max(lens)
 
-def _fails_only_on_min_total(data, expected_paragraphs, check):
+def _is_fallback_candidate(data, expected_paragraphs, check):
     """
-    구조·문단 수·문장 길이는 모두 합격인데 총 분량 하한만 미달한 경우인지.
-    마지막 시도에서 이 경우만 채택해, 짧은 원문 기사가 통째로 빠지는 것을 막는다
-    (2026-11-18 한·호주 5~6학년판 누락 사례). 단, 하한의 70% 미만이면
-    퇴화한 출력으로 보고 채택하지 않는다.
+    합격은 못 했지만 근소하게 미달해, 끝내 합격 응답이 없을 때 채택할 만한 응답인지.
+    구조·문단 수가 정확하고, 아래 완화된 bound 안에 들면 보관 대상이다.
+    - 총 분량: 하한의 70% 이상 (하한 미달 허용), 상한은 그대로 (초과 시 탈락)
+    - 문장 길이: 평균·최장 모두 기준의 10% 이내 초과까지 허용
+    원래는 총 분량 하한만 미달한 경우만 보관했다 (2026-11-18 한·호주 5~6학년판
+    누락 사례). 2026-11-23 최태원 3~4학년판이 평균 문장 66자(기준 65자) +
+    총 269자로 탈락한 것처럼, 문장 길이를 근소하게 넘긴 경우도 보관하도록 넓혔다.
     """
     if not data or not data.get("title") or not data.get("lede"):
         return False
@@ -583,9 +586,11 @@ def _fails_only_on_min_total(data, expected_paragraphs, check):
     if len(valid) != expected_paragraphs:
         return False
     total, avg_sent, max_sent = _body_metrics([b["p"] for b in valid])
-    if max_sent > check["max_sent"] or avg_sent > check["max_avg_sent"] or total > check["max_total"]:
+    if total > check["max_total"]:
         return False
-    return int(check["min_total"] * 0.7) <= total < check["min_total"]
+    if max_sent > check["max_sent"] * 1.1 or avg_sent > check["max_avg_sent"] * 1.1:
+        return False
+    return total >= int(check["min_total"] * 0.7)
 
 def _is_valid_paragraph(item):
     """본문 항목 하나가 유효 문단인지 (is_valid_article의 문단 판정과 같은 기준)."""
@@ -784,7 +789,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
     }}
     """
 
-    fallback_candidate = None  # 총 분량만 미달한 응답의 보관함 (아래 루프 참조)
+    fallback_candidate = None  # 근소하게 미달한 응답의 보관함 (아래 루프 참조)
     last_feedback = None  # 다음 시도 프롬프트 끝에 붙일 직전 탈락 사유 한 줄
     only_paragraph_failures = True  # 지금까지의 검증 탈락이 전부 문단 수 부족뿐인지
     attempt = 0
@@ -827,12 +832,12 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
                 data, target_count, spec["check"])
             if not paragraph_only:
                 only_paragraph_failures = False
-            # 총 분량만 미달한 응답은 예비로 보관해 둔다. 이후 시도가 오류(503 등)로
+            # 근소하게 미달한 응답은 예비로 보관해 둔다. 이후 시도가 오류(503 등)로
             # 응답 없이 끝나도, 합격 응답이 끝내 없으면 보관본을 채택해 기사 누락을 막는다
             # (2026-11-20 울산항 3~4학년판: 1차 281자 미달 → 2차 503 무응답으로 건너뛰어진 사례).
-            if _fails_only_on_min_total(data, target_count, spec["check"]):
+            if _is_fallback_candidate(data, target_count, spec["check"]):
                 fallback_candidate = data
-                print(f"  📥 총 분량만 미달한 응답이라 예비로 보관합니다 (시도 {attempt}/{cap}).")
+                print(f"  📥 기준에 근소하게 미달한 응답이라 예비로 보관합니다 (시도 {attempt}/{cap}).")
             will_retry = attempt < max_retries or (
                 only_paragraph_failures and attempt < EXTENDED_MAX_ATTEMPTS)
             print(f"  ⚠️ 검증 탈락 (시도 {attempt}/{cap}): {'; '.join(reasons)}"
@@ -861,7 +866,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
 
     if fallback_candidate is not None:
         total_chars = sum(len(b["p"]) for b in fallback_candidate["body"] if isinstance(b, dict) and b.get("p"))
-        print(f"  ⚠️ 합격 응답은 없었지만, 총 분량만 미달한 보관 응답(총 {total_chars}자)을 기사 누락 방지를 위해 채택합니다.")
+        print(f"  ⚠️ 합격 응답은 없었지만, 근소하게 미달한 보관 응답(총 {total_chars}자)을 기사 누락 방지를 위해 채택합니다.")
         return fallback_candidate
     print(f"  ❌ {attempt}회 시도 후에도 정상 기사를 생성하지 못해 이 기사({grade_text})는 건너뜁니다.")
     return None
