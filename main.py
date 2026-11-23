@@ -54,7 +54,9 @@ def call_gemini(contents, config=None):
     """모든 Gemini 호출의 단일 통로.
 
     - 호출 횟수를 세어 실행당 상한(MAX_GEMINI_CALLS)을 지킨다.
-    - 503(일시 과부하): 같은 모델로 한 번 더 시도한다.
+    - 503(일시 과부하): 같은 모델로 한 번 더 시도하고, 그래도 503이면
+      다음 후보 모델로 내려가 시도한다 (2026-11-24 실행 #139: 3.5 과부하가
+      발행 내내 이어져 기사 3개가 응답 자체를 못 받고 탈락한 사례).
     - 429(쿼터)·404(모델 없음): 다음 후보 모델로 내려가 시도한다.
       후보가 더 없으면 QuotaExceededError로 실행을 중단한다(부분 발행 방지).
     """
@@ -80,11 +82,19 @@ def call_gemini(contents, config=None):
                     continue
                 raise QuotaExceededError(
                     f"사용 가능한 후보 모델이 없습니다. 마지막 오류: {str(e)[:200]}") from e
-            if kind == "unavailable" and not retried_unavailable:
-                retried_unavailable = True
-                print(f"  ⚠️ 모델 {model} 일시 과부하(503) — 같은 모델로 재시도합니다.")
-                time.sleep(5)
-                continue
+            if kind == "unavailable":
+                if not retried_unavailable:
+                    retried_unavailable = True
+                    print(f"  ⚠️ 모델 {model} 일시 과부하(503) — 같은 모델로 재시도합니다.")
+                    time.sleep(5)
+                    continue
+                # 같은 모델 재시도까지 503이면 과부하가 이어지는 것으로 보고 다음 후보로 전환
+                if _model_index + 1 < len(MODEL_CANDIDATES):
+                    _model_index += 1
+                    print(f"  🔀 모델 {model} 과부하 지속(503) → 다음 후보 "
+                          f"{MODEL_CANDIDATES[_model_index]}로 전환합니다.")
+                    retried_unavailable = False
+                    continue
             raise
 
 BROWSER_UA = {
@@ -122,7 +132,7 @@ db = firestore.client(database_id="headline-news-d6a13")
 # ==========================================
 # 💡 정책 (2026-11-15):
 #  - 1순위는 무료로 검증된 모델로 고정한다. 새 모델이 나와도 자동 승격하지 않는다.
-#  - 429(쿼터)·404(모델 없음)일 때만 아래 허용 목록 순서대로 내려간다.
+#  - 429(쿼터)·404(모델 없음)일 때, 그리고 503 과부하가 재시도 후에도 이어질 때 아래 허용 목록 순서대로 내려간다.
 #  - 자동 감지는 허용 패턴(gemini-X.Y-flash-lite 로 정확히 끝나는 이름)에 맞는
 #    새 모델을 후보 맨 뒤에 보충하는 용도로만 쓴다. -tts/-image 같은 변종은
 #    JSON 모드 미지원·별도 쿼터 문제로 반드시 제외한다.
@@ -567,15 +577,16 @@ def _body_metrics(paragraph_texts):
     lens = [len(s) for s in sents]
     return total, sum(lens) / len(lens), max(lens)
 
-def _is_fallback_candidate(data, expected_paragraphs, check):
+def _meets_minimum_floor(data, expected_paragraphs, check):
     """
-    합격은 못 했지만 근소하게 미달해, 끝내 합격 응답이 없을 때 채택할 만한 응답인지.
-    구조·문단 수가 정확하고, 아래 완화된 bound 안에 들면 보관 대상이다.
-    - 총 분량: 하한의 70% 이상 (하한 미달 허용), 상한은 그대로 (초과 시 탈락)
-    - 문장 길이: 평균·최장 모두 기준의 10% 이내 초과까지 허용
-    원래는 총 분량 하한만 미달한 경우만 보관했다 (2026-11-18 한·호주 5~6학년판
-    누락 사례). 2026-11-23 최태원 3~4학년판이 평균 문장 66자(기준 65자) +
-    총 269자로 탈락한 것처럼, 문장 길이를 근소하게 넘긴 경우도 보관하도록 넓혔다.
+    채택 최소 바닥 (2026-11-24 김님 결정: 교육적으로 적합해 선정된 주제는
+    글자 수 때문에 버리지 않는다 — 채택 순위를 구조·사실 > 최소 바닥으로 재배열).
+    - 구조: 제목·리드·유효 문단 수가 정확해야 한다 (엄격 유지)
+    - 최장 문장: 기준의 1.5배 초과만 탈락 (그 수준이면 읽기 자체가 안 됨)
+    - 총 분량: 하한의 50% 미만(너무 빈약) 또는 상한 초과만 탈락
+    - 평균 문장 길이와 총 분량 하한은 채택 기준이 아니다 (프롬프트 목표로는 유지)
+    이전의 '근소 미달 보관 후 채택'(_is_fallback_candidate)은 이 판정에 흡수됐다:
+    바닥을 충족하면 보관 없이 바로 채택한다.
     """
     if not data or not data.get("title") or not data.get("lede"):
         return False
@@ -586,11 +597,11 @@ def _is_fallback_candidate(data, expected_paragraphs, check):
     if len(valid) != expected_paragraphs:
         return False
     total, avg_sent, max_sent = _body_metrics([b["p"] for b in valid])
-    if total > check["max_total"]:
+    if max_sent > check["max_sent"] * 1.5:
         return False
-    if max_sent > check["max_sent"] * 1.1 or avg_sent > check["max_avg_sent"] * 1.1:
+    if total < int(check["min_total"] * 0.5) or total > check["max_total"]:
         return False
-    return total >= int(check["min_total"] * 0.7)
+    return True
 
 def _is_valid_paragraph(item):
     """본문 항목 하나가 유효 문단인지 (is_valid_article의 문단 판정과 같은 기준)."""
@@ -789,7 +800,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
     }}
     """
 
-    fallback_candidate = None  # 근소하게 미달한 응답의 보관함 (아래 루프 참조)
+    # 채택은 _meets_minimum_floor(최소 바닥) 기준 — 바닥을 충족하면 바로 채택한다
     last_feedback = None  # 다음 시도 프롬프트 끝에 붙일 직전 탈락 사유 한 줄
     only_paragraph_failures = True  # 지금까지의 검증 탈락이 전부 문단 수 부족뿐인지
     attempt = 0
@@ -825,19 +836,16 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
                 "url": article_data.get('original_url') or article_data['link'],
             }
 
-            if is_valid_article(data, expected_paragraphs=target_count, level_check=spec["check"]):
+            if _meets_minimum_floor(data, target_count, spec["check"]):
+                if not is_valid_article(data, expected_paragraphs=target_count, level_check=spec["check"]):
+                    strict_reasons, _, _ = _validation_failure(data, target_count, spec["check"])
+                    print(f"  📥 엄격 기준에는 미달이지만 최소 바닥을 충족해 채택합니다: {'; '.join(strict_reasons)}")
                 return data
 
             reasons, paragraph_only, feedback = _validation_failure(
                 data, target_count, spec["check"])
             if not paragraph_only:
                 only_paragraph_failures = False
-            # 근소하게 미달한 응답은 예비로 보관해 둔다. 이후 시도가 오류(503 등)로
-            # 응답 없이 끝나도, 합격 응답이 끝내 없으면 보관본을 채택해 기사 누락을 막는다
-            # (2026-11-20 울산항 3~4학년판: 1차 281자 미달 → 2차 503 무응답으로 건너뛰어진 사례).
-            if _is_fallback_candidate(data, target_count, spec["check"]):
-                fallback_candidate = data
-                print(f"  📥 기준에 근소하게 미달한 응답이라 예비로 보관합니다 (시도 {attempt}/{cap}).")
             will_retry = attempt < max_retries or (
                 only_paragraph_failures and attempt < EXTENDED_MAX_ATTEMPTS)
             print(f"  ⚠️ 검증 탈락 (시도 {attempt}/{cap}): {'; '.join(reasons)}"
@@ -864,11 +872,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             except Exception:
                 pass
 
-    if fallback_candidate is not None:
-        total_chars = sum(len(b["p"]) for b in fallback_candidate["body"] if isinstance(b, dict) and b.get("p"))
-        print(f"  ⚠️ 합격 응답은 없었지만, 근소하게 미달한 보관 응답(총 {total_chars}자)을 기사 누락 방지를 위해 채택합니다.")
-        return fallback_candidate
-    print(f"  ❌ {attempt}회 시도 후에도 정상 기사를 생성하지 못해 이 기사({grade_text})는 건너뜁니다.")
+    print(f"  ❌ {attempt}회 시도 후에도 최소 바닥을 충족하는 기사를 생성하지 못해 이 기사({grade_text})는 건너뜁니다.")
     return None
 
 # ==========================================
