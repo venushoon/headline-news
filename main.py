@@ -382,6 +382,140 @@ def enrich_articles_with_fulltext(articles):
     return articles, got
 
 # ==========================================
+# 💡 요약 인덱스 + 중복 기사 방지 (2026-11-26)
+# ==========================================
+# daily_briefings/_index 문서에 최근 INDEX_MAX_DAYS일의 날짜별 요약(제목·리드·태그·낱말·원문 URL/제목)을
+# 모아 둔다. 화면의 아카이브 목록·검색은 이 문서 1건만 읽고(본문 전체 읽기 대신),
+# 발행 때는 최근 DEDUP_DAYS일에 쓴 기사와 겹치는 후보를 걸러내는 데 쓴다.
+# (_index는 날짜 형식이 아니라 기존 보안 규칙(daily_briefings/{date})으로 그대로 읽힌다.)
+INDEX_DOC_ID = "_index"
+INDEX_MAX_DAYS = 120
+DEDUP_DAYS = 14
+DEDUP_SIMILARITY = 0.5
+_index_entries = []
+_index_ok = False
+
+def _summarize_articles(articles):
+    out = []
+    for a in articles:
+        src = a.get("source") or {}
+        out.append({
+            "grade": a.get("grade", ""),
+            "title": a.get("title", ""),
+            "lede": a.get("lede", ""),
+            "tags": [x for x in (a.get("tags") or []) if isinstance(x, str)][:6],
+            "words": [v.get("word", "") for v in (a.get("vocabularies") or [])
+                      if isinstance(v, dict)][:8],
+            "url": src.get("url", ""),
+            "ot": src.get("title", ""),
+        })
+    return out
+
+def _load_index():
+    snap = db.collection("daily_briefings").document(INDEX_DOC_ID).get()
+    if not snap.exists:
+        return None
+    return (snap.to_dict() or {}).get("entries", [])
+
+def _save_index(entries):
+    db.collection("daily_briefings").document(INDEX_DOC_ID).set({
+        "entries": entries[:INDEX_MAX_DAYS],
+        "updatedAt": firestore.SERVER_TIMESTAMP,
+    })
+
+def _rebuild_index():
+    """최근 문서에서 인덱스를 처음부터 다시 만든다 (인덱스가 없거나 뒤처졌을 때만)."""
+    print("🗂️ 요약 인덱스를 (재)구성합니다...")
+    entries = []
+    q = (db.collection("daily_briefings")
+         .order_by("__name__", direction=firestore.Query.DESCENDING)
+         .limit(INDEX_MAX_DAYS + 1))
+    for snap in q.stream():
+        if snap.id == INDEX_DOC_ID:
+            continue
+        data = snap.to_dict() or {}
+        entries.append({"date": snap.id, "theme": data.get("theme", ""),
+                        "articles": _summarize_articles(data.get("articles") or [])})
+    entries = entries[:INDEX_MAX_DAYS]
+    _save_index(entries)
+    return entries
+
+def ensure_index():
+    """인덱스를 읽어 오고, 없거나 최신 문서보다 뒤처졌으면 재구성한다. 실패해도 발행은 계속한다."""
+    global _index_entries, _index_ok
+    try:
+        entries = _load_index()
+        q = (db.collection("daily_briefings")
+             .order_by("__name__", direction=firestore.Query.DESCENDING)
+             .limit(2).select([]))
+        ids = [s.id for s in q.stream() if s.id != INDEX_DOC_ID]
+        latest = ids[0] if ids else None
+        if entries is None or (latest and (not entries or entries[0].get("date") != latest)):
+            entries = _rebuild_index()
+        _index_entries, _index_ok = entries, True
+    except Exception as e:
+        _index_entries, _index_ok = [], False
+        print(f"⚠️ 요약 인덱스 준비 실패(중복 방지·인덱스 갱신을 건너뜁니다): {type(e).__name__}: {str(e)[:150]}")
+
+def update_index(date_str, theme_name, articles):
+    """오늘 발행분을 인덱스 맨 앞에 반영한다."""
+    if not _index_ok:
+        print("ℹ️ 인덱스 상태를 알 수 없어 갱신을 건너뜁니다. 다음 실행에서 재구성됩니다.")
+        return
+    entry = {"date": date_str, "theme": theme_name, "articles": _summarize_articles(articles)}
+    entries = [entry] + [e for e in _index_entries if e.get("date") != date_str]
+    try:
+        _save_index(entries)
+    except Exception as e:
+        print(f"⚠️ 인덱스 갱신 실패: {type(e).__name__}: {str(e)[:150]}")
+
+def _norm_title(title):
+    """구글 뉴스 제목 끝의 ' - 언론사'를 떼고 한글·영숫자만 남긴다."""
+    base = (title or "").rsplit(" - ", 1)[0]
+    return re.sub(r"[^0-9a-z가-힣]", "", base.lower())
+
+def _bigrams(s):
+    return {s[i:i + 2] for i in range(len(s) - 1)} if len(s) > 1 else {s}
+
+def _titles_similar(a, b):
+    na, nb = _norm_title(a), _norm_title(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    ba, bb = _bigrams(na), _bigrams(nb)
+    return len(ba & bb) / max(1, len(ba | bb)) >= DEDUP_SIMILARITY
+
+def _seen_recent():
+    """최근 DEDUP_DAYS일에 발행한 기사의 (원문 URL 집합, 제목 목록)."""
+    urls, titles = set(), []
+    for day in _index_entries[:DEDUP_DAYS]:
+        for a in day.get("articles", []):
+            if a.get("url"):
+                urls.add(a["url"])
+            titles += [x for x in (a.get("ot"), a.get("title")) if x]
+    return urls, titles
+
+def drop_duplicates(articles, min_keep=2):
+    """최근 발행 기사와 URL이 같거나 제목이 비슷한 후보를 걸러낸다.
+    남은 기사가 min_keep개 미만이면 중복 후보로 부족분만 채운다(발행 공백 방지)."""
+    urls, titles = _seen_recent()
+    if not urls and not titles:
+        return articles
+    kept, dups = [], []
+    for art in articles:
+        mine = {u for u in (art.get("link"), art.get("original_url")) if u}
+        is_dup = bool(mine & urls) or any(_titles_similar(art.get("title", ""), t) for t in titles)
+        (dups if is_dup else kept).append(art)
+    if dups:
+        print(f"♻️ 최근 {DEDUP_DAYS}일 발행 기사와 겹치는 후보 {len(dups)}개 제외: "
+              + " / ".join(a.get("title", "")[:25] for a in dups[:3]))
+    if len(kept) < min_keep:
+        print("⚠️ 새 기사 후보가 부족해 중복 후보로 일부 채웁니다.")
+        kept += dups[:min_keep - len(kept)]
+    return kept
+
+# ==========================================
 # 3. 성취기준 CSV 불러오기 
 # ==========================================
 def fetch_standards_csv():
@@ -898,6 +1032,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             data["source"] = {
                 "name": article_data.get('source_name') or '구글 뉴스',
                 "url": article_data.get('original_url') or article_data['link'],
+                "title": article_data.get('title', ''),  # 중복 기사 방지용 원문 제목
             }
 
             if _meets_minimum_floor(data, target_count, spec["check"]):
@@ -971,6 +1106,8 @@ def main():
     # Gemini를 한 번도 호출하지 않고 종료한다. 워크플로우의 '확인 실행'이
     # 이 동작을 이용해, 첫 실행이 지연/실패한 날에만 대신 발행한다.
     # 수동 강제 재발행이 필요하면 FORCE_RUN=1 환경변수를 준다.
+    ensure_index()
+
     if os.environ.get("FORCE_RUN") != "1":
         existing = db.collection('daily_briefings').document(today_str).get()
         if existing.exists:
@@ -1004,8 +1141,11 @@ def run_pipeline(today_str):
     filtered_candidates = filter_low_quality_articles(raw_candidates)
     print(f"✅ 필터링 후 {len(filtered_candidates)}개 후보 남음.")
 
+    filtered_candidates = drop_duplicates(filtered_candidates, min_keep=4)
+
     print("🌐 원문 본문 수집 중... (일반 HTTP라 API 비용 없음)")
     filtered_candidates, fulltext_count = enrich_articles_with_fulltext(filtered_candidates)
+    filtered_candidates = drop_duplicates(filtered_candidates, min_keep=2)  # 원문 URL 기준 재확인
     print(f"✅ 원문 본문 확보: {fulltext_count}개 / 시도 {min(len(filtered_candidates), MAX_FULLTEXT_ATTEMPTS)}개")
 
     print("🧠 AI가 초등학생 교육 가치 기준으로 최종 기사를 선정 중...")
@@ -1041,6 +1181,7 @@ def run_pipeline(today_str):
             "theme": theme_name,
             "createdAt": firestore.SERVER_TIMESTAMP
         })
+        update_index(today_str, theme_name, final_articles)
         print("🎉 업로드 완료! React 앱을 새로고침하여 확인해 보세요.")
     else:
         print("⚠️ 업로드할 기사가 생성되지 않았습니다.")

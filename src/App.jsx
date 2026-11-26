@@ -29,7 +29,8 @@ const getTodayString = () => {
 
 // 아카이브 읽기 범위·캐시 (Firestore 읽기 비용 절감)
 const ARCHIVE_LIMIT = 90;
-const ARCHIVE_CACHE_KEY = 'headline-news-archive-v1';
+const ARCHIVE_CACHE_KEY = 'headline-news-archive-v2';
+const ARCHIVE_INDEX_DOC = '_index'; // 발행 서버가 만드는 날짜별 요약 문서(제목·리드·태그)
 const ARCHIVE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const readArchiveCache = () => {
@@ -117,6 +118,8 @@ export default function App() {
 
   // 날짜를 빠르게 연속 이동하면 응답이 순서 없이 도착할 수 있어, 최신 요청만 반영한다
   const fetchSeqRef = useRef(0);
+  // 검색 결과에서 연 기사: 문서를 불러온 뒤 해당 기사 면으로 이동하기 위한 표식
+  const pendingPickRef = useRef(null);
   const fetchBriefing = async (dateStr) => {
     if (!db) return;
     const seq = ++fetchSeqRef.current;
@@ -127,8 +130,17 @@ export default function App() {
       const docSnap = await getDoc(docRef);
       if (seq !== fetchSeqRef.current) return; // 더 최신 요청이 나갔으면 이 응답은 버린다
       if (docSnap.exists()) {
+        const dayArticles = docSnap.data().articles || [];
         setBriefingExists(true);
-        setArticles(docSnap.data().articles || []);
+        setArticles(dayArticles);
+        const pick = pendingPickRef.current;
+        pendingPickRef.current = null;
+        if (pick) {
+          const idx = dayArticles
+            .filter((x) => x.grade === pick.grade)
+            .findIndex((x) => x.title === pick.title);
+          setCurrentArticleIndex(idx >= 0 ? idx : 0);
+        }
       } else {
         setBriefingExists(false);
         setArticles([]);
@@ -159,16 +171,32 @@ export default function App() {
           setArchiveList(cached);
           return cached;
         }
-        const q = query(
-          collection(db, 'daily_briefings'),
-          orderBy('__name__', 'desc'),
-          limit(ARCHIVE_LIMIT)
-        );
-        const querySnapshot = await getDocs(q);
-        const list = [];
-        querySnapshot.forEach((docSnap) => {
-          list.push({ date: docSnap.id, articles: docSnap.data().articles });
-        });
+        let list = [];
+        try {
+          // 1순위: 요약 인덱스 문서 1건 (본문 전체를 읽지 않아 빠르고 읽기 비용이 거의 없다)
+          const indexSnap = await getDoc(doc(db, 'daily_briefings', ARCHIVE_INDEX_DOC));
+          if (indexSnap.exists()) {
+            list = (indexSnap.data().entries || []).map((e) => ({
+              date: e.date,
+              articles: e.articles || [],
+            }));
+          }
+        } catch (indexError) {
+          console.warn("요약 인덱스 로드 실패, 전체 읽기로 대체합니다:", indexError);
+        }
+        if (list.length === 0) {
+          // 폴백: 인덱스가 아직 없을 때(첫 발행 전) 기존 방식으로 최근 문서를 읽는다
+          const q = query(
+            collection(db, 'daily_briefings'),
+            orderBy('__name__', 'desc'),
+            limit(ARCHIVE_LIMIT)
+          );
+          const querySnapshot = await getDocs(q);
+          querySnapshot.forEach((docSnap) => {
+            if (docSnap.id === ARCHIVE_INDEX_DOC) return;
+            list.push({ date: docSnap.id, articles: docSnap.data().articles });
+          });
+        }
         setArchiveList(list);
         writeArchiveCache(list);
         return list;
@@ -213,7 +241,7 @@ export default function App() {
       list.forEach((day) => {
         (day.articles || []).forEach((art) => {
           if (art.grade !== selectedGrade) return;
-          const haystack = `${art.title || ''} ${art.lede || ''} ${(art.body || []).map(b => b.p || '').join(' ')} ${(art.vocabularies || []).map(v => v.word || '').join(' ')} ${(art.tags || []).join(' ')}`.toLowerCase();
+          const haystack = `${art.title || ''} ${art.lede || ''} ${(art.body || []).map(b => b.p || '').join(' ')} ${(art.vocabularies || []).map(v => v.word || '').join(' ')} ${(art.words || []).join(' ')} ${(art.tags || []).join(' ')}`.toLowerCase();
           if (haystack.includes(term)) {
             results.push({ date: day.date, article: art });
           }
@@ -235,15 +263,10 @@ export default function App() {
   const openSearchResult = (date, article) => {
     setSearchTerm('');
     setCurrentDate(date);
-    const dayData = archiveList.find(d => d.date === date);
-    const dayArticles = dayData ? dayData.articles : [];
-    setBriefingExists(true);
-    setArticles(dayArticles);
     setViewMode('today');
-
-    const gradeFiltered = dayArticles.filter(a => a.grade === selectedGrade);
-    const idx = gradeFiltered.findIndex(a => a === article);
-    setCurrentArticleIndex(idx >= 0 ? idx : 0);
+    // 검색·아카이브 목록은 요약만 갖고 있으므로 본문은 해당 날짜 문서를 불러와 보여 준다
+    pendingPickRef.current = { grade: article.grade, title: article.title };
+    fetchBriefing(date);
   };
 
   const handleDateChange = (days) => {
@@ -596,9 +619,8 @@ export default function App() {
                                 <button
                                   onClick={() => {
                                     setCurrentDate(item.date);
-                                    setBriefingExists(true);
-                                    setArticles(item.articles);
                                     setViewMode('today');
+                                    fetchBriefing(item.date);
                                   }}
                                   className="shrink-0 px-3 py-1.5 bg-gray-800 text-white text-xs rounded hover:bg-gray-700 cursor-pointer"
                                 >
