@@ -162,6 +162,9 @@ MODEL_ALLOWLIST = [
     "gemini-4-hydrogen",      # 무료 등급 예비 (2026-11-12 GA)
 ]
 
+# 모델 목록 API에는 보이지만 실제로는 404인(신규 사용자 차단·종료) 모델 — 자동 감지에서 제외
+RETIRED_MODELS = {"gemini-2.5-flash-lite"}
+
 def build_model_candidates(client):
     """허용 목록 순서 + 감지된 신규 lite 모델(맨 뒤)로 후보 목록을 구성한다.
 
@@ -182,7 +185,7 @@ def build_model_candidates(client):
     extras = []
     for name in available:
         match = re.fullmatch(r"gemini-(\d+)\.(\d+)-flash-lite", name)
-        if match and name not in candidates:
+        if match and name not in candidates and name not in RETIRED_MODELS:
             extras.append(((int(match.group(1)), int(match.group(2))), name))
     extras.sort(reverse=True)
     if extras:
@@ -219,14 +222,51 @@ def _clean_snippet(html_text):
     text = html.unescape(text)  # &nbsp; &quot; &#39; &lt; 등 모든 엔티티를 한 번에 디코딩
     return " ".join(text.split())
 
+RSS_RETRY_BACKOFF_SECONDS = [5, 15]
+
+def _fetch_rss_entries(url, label):
+    """RSS를 브라우저 UA로 받아(상태·크기 확인, 실패 시 백오프 재시도) 항목 목록을 돌려준다.
+    feedparser가 직접 받으면 차단·오류를 조용히 빈 목록으로 삼키므로, 응답을 직접 받아 진단 로그를 남긴다
+    (2026-11-26 실행에서 '기사를 찾지 못했습니다'로 3회 연속 실패한 원인 추적용)."""
+    for attempt in range(len(RSS_RETRY_BACKOFF_SECONDS) + 1):
+        status, body = None, b""
+        try:
+            req = urllib.request.Request(url, headers={**BROWSER_UA, "Accept": "application/rss+xml, application/xml, text/xml, */*"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                status = resp.status
+                body = resp.read(3_000_000)
+        except Exception as e:
+            status = getattr(e, "code", None)
+            print(f"  ⚠️ [{label}] RSS 요청 실패 (HTTP {status}): {type(e).__name__}: {str(e)[:120]}")
+        if body:
+            feed = feedparser.parse(body)
+            if feed.entries:
+                return feed.entries
+            snippet = " ".join(body[:200].decode("utf-8", errors="replace").split())
+            print(f"  ⚠️ [{label}] 항목 0개 (HTTP {status}, {len(body)}바이트, bozo={bool(feed.bozo)}): {snippet}")
+        if attempt < len(RSS_RETRY_BACKOFF_SECONDS):
+            wait = RSS_RETRY_BACKOFF_SECONDS[attempt]
+            print(f"  ↻ [{label}] {wait}초 뒤 다시 시도합니다 ({attempt + 1}/{len(RSS_RETRY_BACKOFF_SECONDS)}).")
+            time.sleep(wait)
+    return []
+
 def fetch_news_by_query(query, limit=10):
     encoded_query = urllib.parse.quote(query)
-    rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+    sources = [
+        ("검색", f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"),
+        # 검색 피드가 막히거나 비었을 때의 예비: 주제와 무관할 수 있지만 AI 선정 단계가 주제 적합도로 고른다
+        ("헤드라인", "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko"),
+    ]
+    entries = []
+    for label, url in sources:
+        entries = _fetch_rss_entries(url, label)
+        if entries:
+            if label != "검색":
+                print(f"⚠️ 검색 피드가 비어 예비 피드({label})로 대체합니다.")
+            break
 
-    feed = feedparser.parse(rss_url)
     articles = []
-
-    for entry in feed.entries[:limit]:
+    for entry in entries[:limit]:
         source_name = ""
         if hasattr(entry, 'source'):
             source_name = entry.source.get('title', '') if hasattr(entry.source, 'get') else ""
