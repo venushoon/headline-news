@@ -4,15 +4,24 @@ on:
   schedule:
     # 1차 발행: 05:00 KST (전날 20:00 UTC) — GitHub 스케줄 지연을 감안한 시각
     - cron: '0 20 * * *'
-    # 확인 실행: 07:30 KST (전날 22:30 UTC) — 1차가 지연·실패했을 때만 대신 발행한다.
+    # 확인 실행: 06:00 / 07:30 / 08:30 KST — 앞선 실행이 지연·실패했을 때만 대신 발행한다.
+    # GitHub 스케줄은 지연되거나 건너뛰는 일이 잦아 시각을 촘촘히 둔다 (2026-11-26).
     # 이미 발행된 날은 main.py가 기사 생성 호출 없이 종료하므로 무료 한도에 영향이 없다.
+    - cron: '0 21 * * *'
     - cron: '30 22 * * *'
+    - cron: '30 23 * * *'
   workflow_dispatch:
     inputs:
       force:
         description: '이미 발행된 날도 강제로 다시 만들기'
         type: boolean
         default: false
+
+# 실패 시 [발행 실패] 이슈를 만들려면 issues 쓰기 권한이 필요하다
+# (기본 토큰은 읽기 전용이면 이슈 생성이 조용히 실패한다)
+permissions:
+  contents: read
+  issues: write
 
 # 같은 워크플로우가 겹쳐 돌며 같은 날 신문을 두 번 만들지 않도록 직렬화
 concurrency:
@@ -22,7 +31,7 @@ concurrency:
 jobs:
   run-script:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +50,13 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FORCE_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) && '1' || '' }}
-        run: python main.py
+        run: |
+          # 일시 장애(모델 503 등)는 몇 분 뒤 다시 시도한다. 이미 발행된 날은 첫 시도에서 바로 종료(0).
+          for i in 1 2 3; do
+            python main.py && exit 0
+            [ "$i" -lt 3 ] && { echo "::warning::발행 실패 — 8분 뒤 재시도합니다 ($i/3)"; sleep 480; }
+          done
+          exit 1
 
       - name: Open issue on failure
         if: failure()

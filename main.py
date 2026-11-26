@@ -33,9 +33,11 @@ from google.genai import types
 #  - 원문 본문 수집은 일반 HTTP라 API 비용이 없고, 프롬프트에 넣는
 #    본문 길이를 잘라 입력 토큰 증가도 제한한다.
 #  - 모델은 1-1절의 후보 목록(고정 1순위 + 허용 목록)을 순서대로 쓴다.
-MAX_GEMINI_CALLS = 16  # 2026-11-18: 12→16 (503 재시도가 예산을 태워 뒤 기사가 굶는 사례; flash-lite 무료 한도는 모델당 500회/일이라 여유 충분)
+MAX_GEMINI_CALLS = 24  # 2026-11-18: 12→16 (503 재시도가 예산을 태워 뒤 기사가 굶는 사례; flash-lite 무료 한도는 모델당 500회/일이라 여유 충분)
 EXTENDED_MAX_ATTEMPTS = 4  # 2026-11-21: 문단 수 부족(빈 문단 등)으로만 탈락한 판의 시도 상한 (기본 2회 → 4회; 실행 #128 5~6학년판 누락 사례)
 _gemini_call_count = 0
+# 503(과부하)은 같은 모델로 지수 백오프 재시도 후 다음 후보로 내려간다 (2026-11-26: 5초×1회 → 5·15·45초)
+UNAVAILABLE_BACKOFF_SECONDS = [5, 15, 45]
 
 class QuotaExceededError(Exception):
     """모든 후보 모델을 쓸 수 없거나 자체 호출 상한에 도달했을 때 발생."""
@@ -62,7 +64,7 @@ def call_gemini(contents, config=None):
       후보가 더 없으면 QuotaExceededError로 실행을 중단한다(부분 발행 방지).
     """
     global _gemini_call_count, _model_index
-    retried_unavailable = False
+    unavailable_retries = 0
     while True:
         if _gemini_call_count >= MAX_GEMINI_CALLS:
             raise QuotaExceededError(
@@ -79,23 +81,27 @@ def call_gemini(contents, config=None):
                     _model_index += 1
                     print(f"  🔀 모델 {model} 사용 불가({kind}) → 다음 후보 "
                           f"{MODEL_CANDIDATES[_model_index]}로 전환합니다.")
-                    retried_unavailable = False
+                    unavailable_retries = 0
                     continue
                 raise QuotaExceededError(
                     f"사용 가능한 후보 모델이 없습니다. 마지막 오류: {str(e)[:200]}") from e
             if kind == "unavailable":
-                if not retried_unavailable:
-                    retried_unavailable = True
-                    print(f"  ⚠️ 모델 {model} 일시 과부하(503) — 같은 모델로 재시도합니다.")
-                    time.sleep(5)
+                if unavailable_retries < len(UNAVAILABLE_BACKOFF_SECONDS):
+                    wait = UNAVAILABLE_BACKOFF_SECONDS[unavailable_retries]
+                    unavailable_retries += 1
+                    print(f"  ⚠️ 모델 {model} 일시 과부하(503) — {wait}초 뒤 같은 모델로 재시도합니다 "
+                          f"({unavailable_retries}/{len(UNAVAILABLE_BACKOFF_SECONDS)}).")
+                    time.sleep(wait)
                     continue
-                # 같은 모델 재시도까지 503이면 과부하가 이어지는 것으로 보고 다음 후보로 전환
+                # 백오프 재시도까지 503이면 과부하가 이어지는 것으로 보고 다음 후보로 전환
                 if _model_index + 1 < len(MODEL_CANDIDATES):
                     _model_index += 1
                     print(f"  🔀 모델 {model} 과부하 지속(503) → 다음 후보 "
                           f"{MODEL_CANDIDATES[_model_index]}로 전환합니다.")
-                    retried_unavailable = False
+                    unavailable_retries = 0
                     continue
+                raise QuotaExceededError(
+                    f"모든 후보 모델이 과부하(503) 상태입니다. 마지막 오류: {str(e)[:200]}") from e
             raise
 
 BROWSER_UA = {
@@ -147,10 +153,13 @@ def init_services():
 #    JSON 모드 미지원·별도 쿼터 문제로 반드시 제외한다.
 #  - 무료 여부는 API로 판정할 수 없으므로, 이 목록 자체가 허용 범위다.
 #    모델을 1순위로 올리려면 사람이 검증한 뒤 이 목록의 순서를 직접 바꾼다.
+# 2026-11-26: gemini-2.5-flash-lite는 신규 사용자에게 404(서비스 종료)라 제거했다
+#  (11-26 05:00 실행에서 3.5·3.1이 503일 때 대신하지 못해 발행이 중단됨).
+#  gemini-4-hydrogen은 공식 문서상 무료 등급 제공(요금 0, 호출 제한만 있음)이라 마지막 예비로 추가한다.
 MODEL_ALLOWLIST = [
     "gemini-3.5-flash-lite",  # 1순위 — 검증됨 (2026-11-14~15 실제 발행에 사용)
     "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
+    "gemini-4-hydrogen",      # 무료 등급 예비 (2026-11-12 GA)
 ]
 
 def build_model_candidates(client):
@@ -1019,7 +1028,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
                 attempt_prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    max_output_tokens=4096  # 응답이 중간에 잘려 본문이 비는 것을 방지
+                    max_output_tokens=8192  # 응답이 중간에 잘려 본문이 비는 것을 방지 (thinking 토큰 포함)
                 )
             )
             try:
@@ -1120,7 +1129,9 @@ def main():
         # 쿼터 초과 상태에서는 부분 발행도 하지 않는다 (기존 상태 유지)
         print(f"\n⛔ 무료 쿼터 보호로 오늘 발행을 중단합니다: {e}")
         print("오늘 문서는 만들지 않았으니, 다음 정기 실행에서 다시 시도합니다.")
-        return
+        # 정상 종료(0)하면 실행이 '성공'으로 보여 실패를 알아채지 못하므로 비정상 종료한다
+        # (워크플로우가 재시도하고, 끝내 실패하면 [발행 실패] 이슈를 만든다)
+        sys.exit(1)
     print(f"📊 이번 실행 Gemini 호출 횟수: {_gemini_call_count}회 (상한 {MAX_GEMINI_CALLS}회)")
 
 def run_pipeline(today_str):
@@ -1135,7 +1146,7 @@ def run_pipeline(today_str):
     
     if not raw_candidates:
         print("⚠️ 기사를 찾지 못했습니다.")
-        return
+        sys.exit(1)
 
     print(f"📋 후보 기사 {len(raw_candidates)}개 수집 완료. 홍보성/저품질 기사 필터링 중...")
     filtered_candidates = filter_low_quality_articles(raw_candidates)
@@ -1153,7 +1164,7 @@ def run_pipeline(today_str):
 
     if not raw_articles:
         print("⚠️ 선정된 기사가 없습니다.")
-        return
+        sys.exit(1)
         
     final_articles = []
     
