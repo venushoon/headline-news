@@ -21,8 +21,35 @@ const formatDateStr = (d) => {
 // 현재 날짜 가져오기
 const getTodayString = () => {
   // 발행 기준(Asia/Seoul)과 맞추기 위해 브라우저 시간대와 무관하게 서울 날짜를 쓴다
-  const seoulNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
-  return formatDateStr(seoulNow);
+  // en-CA 로케일은 YYYY-MM-DD 형식을 돌려준다 (문자열 재파싱을 하지 않아 브라우저 차이가 없다)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+};
+
+// 아카이브 읽기 범위·캐시 (Firestore 읽기 비용 절감)
+const ARCHIVE_LIMIT = 90;
+const ARCHIVE_CACHE_KEY = 'headline-news-archive-v1';
+const ARCHIVE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+const readArchiveCache = () => {
+  try {
+    const raw = sessionStorage.getItem(ARCHIVE_CACHE_KEY);
+    if (!raw) return null;
+    const { savedAt, list } = JSON.parse(raw);
+    if (Date.now() - savedAt > ARCHIVE_CACHE_TTL_MS || !Array.isArray(list) || list.length === 0) return null;
+    return list;
+  } catch {
+    return null;
+  }
+};
+
+const writeArchiveCache = (list) => {
+  try {
+    sessionStorage.setItem(ARCHIVE_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), list }));
+  } catch {
+    // 저장 공간 부족·사생활 보호 모드면 캐시 없이 동작한다
+  }
 };
 
 export default function App() {
@@ -55,8 +82,32 @@ export default function App() {
   useEffect(() => {
     if (initError) return;
     const dateStr = getTodayString();
+    todayRef.current = dateStr;
     setCurrentDate(dateStr);
     fetchBriefing(dateStr);
+  }, []);
+
+  // 자정을 넘겨 탭을 켜 둔 경우: 탭이 다시 보일 때 '오늘'이 바뀌었으면 새 날짜로 갱신
+  // (사용자가 오늘 신문을 보고 있던 경우에만 따라간다)
+  const todayRef = useRef('');
+  const currentDateRef = useRef('');
+  currentDateRef.current = currentDate;
+  useEffect(() => {
+    if (initError) return;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const today = getTodayString();
+      if (today === todayRef.current) return;
+      const wasOnToday = currentDateRef.current === todayRef.current;
+      todayRef.current = today;
+      if (wasOnToday) {
+        setCurrentDate(today);
+        fetchBriefing(today);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 날짜, 학년, 검색어가 바뀌면 항상 첫 번째(1면) 기사로 리셋
@@ -93,26 +144,44 @@ export default function App() {
   };
 
   // 아카이브 목록이 아직 없으면 불러오고, 있으면 그대로 반환 (뷰 모드는 바꾸지 않음)
-  const ensureArchiveLoaded = async () => {
-    if (!db) return [];
-    if (archiveList.length > 0) return archiveList;
-    try {
-      const q = query(
-        collection(db, 'daily_briefings'),
-        orderBy('__name__', 'desc'),
-        limit(180)
-      );
-      const querySnapshot = await getDocs(q);
-      const list = [];
-      querySnapshot.forEach((docSnap) => {
-        list.push({ date: docSnap.id, articles: docSnap.data().articles });
-      });
-      setArchiveList(list);
-      return list;
-    } catch (error) {
-      console.error("아카이브 로드 실패:", error);
-      return [];
-    }
+  // 진행 중인 요청은 ref로 공유해 검색어를 연달아 바꿔도 같은 쿼리를 중복 호출하지 않는다.
+  // 읽기 비용을 줄이기 위해 최근 ARCHIVE_LIMIT일만 읽고, 같은 탭에서는 sessionStorage로 캐시한다.
+  const archivePromiseRef = useRef(null);
+  const ensureArchiveLoaded = () => {
+    if (!db) return Promise.resolve([]);
+    if (archiveList.length > 0) return Promise.resolve(archiveList);
+    if (archivePromiseRef.current) return archivePromiseRef.current;
+
+    const task = (async () => {
+      try {
+        const cached = readArchiveCache();
+        if (cached) {
+          setArchiveList(cached);
+          return cached;
+        }
+        const q = query(
+          collection(db, 'daily_briefings'),
+          orderBy('__name__', 'desc'),
+          limit(ARCHIVE_LIMIT)
+        );
+        const querySnapshot = await getDocs(q);
+        const list = [];
+        querySnapshot.forEach((docSnap) => {
+          list.push({ date: docSnap.id, articles: docSnap.data().articles });
+        });
+        setArchiveList(list);
+        writeArchiveCache(list);
+        return list;
+      } catch (error) {
+        console.error("아카이브 로드 실패:", error);
+        setFetchError(error.message || "지난 신문 목록을 불러오지 못했습니다.");
+        return [];
+      } finally {
+        archivePromiseRef.current = null;
+      }
+    })();
+    archivePromiseRef.current = task;
+    return task;
   };
 
   const fetchArchiveList = async () => {
@@ -590,7 +659,7 @@ export default function App() {
                   return <div className="text-center py-20 text-gray-500 font-sans hide-on-print">기사를 표시할 수 없습니다. 페이지를 새로고침해 보세요.</div>;
                 }
                 return (
-                  <article key={article.title} className="space-y-6 news-typography">
+                  <article key={`${currentDate}-${selectedGrade}-${currentArticleIndex}`} className="space-y-6 news-typography">
 
                     {article.standards && article.standards.length > 0 && (
                       <div className="flex flex-wrap gap-2 font-sans">

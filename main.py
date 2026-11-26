@@ -12,6 +12,7 @@ import feedparser
 import firebase_admin
 import urllib.request
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
@@ -106,26 +107,34 @@ BROWSER_UA = {
 # ==========================================
 # 1. 환경 설정 및 API 키 세팅
 # ==========================================
-load_dotenv() 
+load_dotenv()
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# 외부 서비스 핸들 — import 시점에 키·네트워크를 요구하지 않도록 init_services()에서 채운다
+# (테스트·import 가능, 2026-11-26)
+client = None
+db = None
 
-if not GEMINI_API_KEY:
-    print("\n⚠️ [오류] .env 파일에서 'GEMINI_API_KEY'를 찾을 수 없습니다.\n")
-    exit(1)
+def init_services():
+    """Gemini·Firebase 클라이언트와 모델 후보 목록을 초기화한다 (main()에서 한 번 호출)."""
+    global client, db, MODEL_CANDIDATES, _model_index
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("\n⚠️ [오류] .env 파일에서 'GEMINI_API_KEY'를 찾을 수 없습니다.\n")
+        sys.exit(1)
+    client = genai.Client(api_key=api_key)
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+    if not firebase_admin._apps:
+        try:
+            cred = credentials.Certificate("serviceAccountKey.json")
+            firebase_admin.initialize_app(cred)
+        except FileNotFoundError:
+            print("\n⚠️ [오류] serviceAccountKey.json 파일이 없습니다.\n")
+            sys.exit(1)
+    db = firestore.client(database_id="headline-news-d6a13")
 
-# Firebase Admin SDK 초기화
-if not firebase_admin._apps:
-    try:
-        cred = credentials.Certificate("serviceAccountKey.json") 
-        firebase_admin.initialize_app(cred)
-    except FileNotFoundError:
-        print("\n⚠️ [오류] serviceAccountKey.json 파일이 없습니다.\n")
-        exit(1)
-
-db = firestore.client(database_id="headline-news-d6a13")
+    MODEL_CANDIDATES = build_model_candidates(client)
+    _model_index = 0
+    print(f"🧠 모델 후보 목록: {MODEL_CANDIDATES}")
 
 # ==========================================
 # 1-1. 모델 후보 목록 (고정 1순위 + 허용 목록 폴백)
@@ -171,9 +180,8 @@ def build_model_candidates(client):
         print(f"ℹ️ 감지된 신규 lite 모델을 후보 맨 뒤에 보충: {[n for _, n in extras]}")
     return candidates + [name for _, name in extras]
 
-MODEL_CANDIDATES = build_model_candidates(client)
+MODEL_CANDIDATES = []  # init_services()에서 채워진다
 _model_index = 0
-print(f"🧠 모델 후보 목록: {MODEL_CANDIDATES}")
 
 # ==========================================
 # 2. 요일별 테마 및 뉴스 검색 로직
@@ -245,6 +253,7 @@ def decode_google_news_url(google_link):
         sg = re.search(r'data-n-a-sg="([^"]+)"', html)
         ts = re.search(r'data-n-a-ts="([^"]+)"', html)
         if not (sg and ts):
+            print("  ⚠️ 원문 URL 복원 실패: 기사 페이지에서 서명 값을 찾지 못했습니다(구글 뉴스 형식 변경 가능성).")
             return None
         inner = ["garturlreq", _GARTURLREQ_CTX, art_id, int(ts.group(1)), sg.group(1)]
         envelope = [["Fbv4je", json.dumps(inner, separators=(",", ":")), None, "0"]]
@@ -264,8 +273,10 @@ def decode_google_news_url(google_link):
                 payload = json.loads(row[2])
                 if payload and payload[0] == "garturlres":
                     return payload[1]
-    except Exception:
+    except Exception as e:
+        print(f"  ⚠️ 원문 URL 복원 실패(구글 뉴스 형식 변경 가능성): {type(e).__name__}: {str(e)[:100]}")
         return None
+    print("  ⚠️ 원문 URL 복원 실패: 응답에서 원문 주소를 찾지 못했습니다.")
     return None
 
 class _ParagraphExtractor(HTMLParser):
@@ -335,27 +346,38 @@ def fetch_original_text(url, max_chars=2800):
 
 # 본문 확보를 시도할 후보 수 상한 (HTTP라 무료지만 실행 시간 보호)
 MAX_FULLTEXT_ATTEMPTS = 6
+# 프롬프트에 넣는 성취기준 레코드 상한 (입력 토큰 절감, 2026-11-26: 100→40)
+MAX_STANDARDS_IN_PROMPT = 40
+
+def _fetch_fulltext_for(art):
+    """기사 하나의 원문 본문을 채운다. 성공하면 True."""
+    original_url = decode_google_news_url(art["link"])
+    if not original_url:
+        return False
+    art["original_url"] = original_url
+    text = fetch_original_text(original_url)
+    if text:
+        art["content"] = text
+        return True
+    return False
 
 def enrich_articles_with_fulltext(articles):
     """
-    후보 기사에 원문 본문을 채운다.
+    후보 기사에 원문 본문을 채운다 (최대 MAX_FULLTEXT_ATTEMPTS개를 병렬 수집).
     본문을 얻은 기사가 앞으로 오도록 정렬하되 순서는 안정적으로 유지.
     반환: (정렬된 기사 목록, 본문 확보 개수)
     """
-    attempted = 0
-    got = 0
-    for art in articles:
-        if attempted >= MAX_FULLTEXT_ATTEMPTS:
-            break
-        attempted += 1
-        original_url = decode_google_news_url(art["link"])
-        if not original_url:
-            continue
-        art["original_url"] = original_url
-        text = fetch_original_text(original_url)
-        if text:
-            art["content"] = text
-            got += 1
+    targets = articles[:MAX_FULLTEXT_ATTEMPTS]
+    if targets:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            got = sum(1 for ok in pool.map(_fetch_fulltext_for, targets) if ok)
+    else:
+        got = 0
+    if targets and got == 0:
+        print("⚠️⚠️ [경고] 원문 본문을 한 건도 확보하지 못했습니다 — 요약만으로 기사를 쓰게 되어 "
+              "사실 오류 위험이 큽니다. 구글 뉴스 URL 복원 로직 점검이 필요합니다.")
+    elif targets and got * 2 < len(targets):
+        print(f"⚠️ 원문 확보율이 낮습니다({got}/{len(targets)}).")
     articles.sort(key=lambda a: 0 if a.get("content") else 1)  # stable sort
     return articles, got
 
@@ -419,7 +441,7 @@ def filter_standards_by_theme(csv_data, theme_name):
     header, body_rows = rows[0], rows[1:]
     filtered = [row for row in body_rows
                 if any(keyword in " ".join(row) for keyword in keywords)]
-    filtered = filtered[:100]  # 상한은 '줄'이 아니라 '레코드(성취기준)' 100개
+    filtered = filtered[:MAX_STANDARDS_IN_PROMPT]  # 상한은 '줄'이 아니라 '레코드(성취기준)' 개수
 
     out = io.StringIO()
     writer = csv.writer(out)
@@ -430,26 +452,37 @@ def filter_standards_by_theme(csv_data, theme_name):
 # ==========================================
 # 💡 1단계: 규칙 기반 홍보성/저품질 기사 제거
 # ==========================================
+# 부분 일치로 거르면 '인사말'·'외교 브리핑' 같은 정상 기사까지 탈락하므로,
+# 모호하게 짧은 단어는 키워드에서 빼고 머리말([속보] 등) 형태일 때만 거른다 (2026-11-26).
 BLACKLIST_KEYWORDS = [
-    "채용", "모집", "접수", "부고", "인사", "동정", "포토", "화보",
-    "공연", "행사", "축제", "전시회", "박람회", "할인", "이벤트",
-    "특가", "세일", "쿠폰", "경품", "당첨", "판매", "출시 기념",
-    "브리핑", "인터뷰 전문", "속보", "단독", "[포토]", "[영상]",
+    "채용", "모집", "접수", "부고", "동정", "포토", "화보",
+    "공연", "축제", "전시회", "박람회", "할인", "이벤트",
+    "특가", "세일", "쿠폰", "경품", "당첨", "출시 기념",
+    "인터뷰 전문", "[포토]", "[영상]",
     "뉴스 모음", "주요 뉴스", "종합뉴스", "와이드", "이슈 정리",
     "한주 정리", "주간 브리핑", "톱뉴스", "헤드라인 모음"
 ]
+BLACKLIST_PATTERNS = [
+    re.compile(r"^\s*[\[\(【<]\s*(속보|단독|인사|동정|부고|포토|영상|화보)\s*[\]\)】>]"),
+    re.compile(r"(행사|판매)\s*(안내|개최|돌입|시작)"),
+]
 
-def filter_low_quality_articles(articles):
+def _is_low_quality_title(title):
+    return (any(k in title for k in BLACKLIST_KEYWORDS)
+            or any(pt.search(title) for pt in BLACKLIST_PATTERNS))
+
+def filter_low_quality_articles(articles, min_keep=2):
     """
     제목에 홍보성/저품질 키워드가 포함된 기사를 1차로 걸러냄.
+    남은 기사가 min_keep개 미만이면 걸러진 기사 중 앞에서부터 필요한 만큼만 채운다
+    (전체를 되돌리면 홍보성 기사가 그대로 통과하므로).
     """
-    filtered = []
+    kept, rejected = [], []
     for art in articles:
-        title = art.get("title", "")
-        if any(keyword in title for keyword in BLACKLIST_KEYWORDS):
-            continue
-        filtered.append(art)
-    return filtered if len(filtered) >= 2 else articles
+        (rejected if _is_low_quality_title(art.get("title", "")) else kept).append(art)
+    if len(kept) < min_keep:
+        kept += rejected[:min_keep - len(kept)]
+    return kept
 
 # ==========================================
 # 💡 2단계: AI를 이용한 교육 가치 기준 기사 선정 (1회 호출)
@@ -528,12 +561,12 @@ def normalize_article_body(data):
     AI가 body를 ["문장1", "문장2"] 형태(문자열 배열)로 반환하는 경우가 있어,
     프론트엔드가 기대하는 [{"p": "문장1"}, {"p": "문장2"}] 형태로 통일함.
     """
-    if not data or not isinstance(data.get("body"), list):
+    if not isinstance(data, dict) or not isinstance(data.get("body"), list):
         return data
     normalized = []
     for item in data["body"]:
         if isinstance(item, dict) and "p" in item:
-            normalized.append({"p": item["p"]})
+            normalized.append({"p": item["p"] if isinstance(item["p"], str) else str(item["p"])})
         elif isinstance(item, str):
             normalized.append({"p": item})
     data["body"] = normalized
@@ -546,14 +579,14 @@ def is_valid_article(data, expected_paragraphs=None, level_check=None):
     level_check가 주어지면 문장 길이·총 분량의 학년별 하드 bound도 검사한다
     (규칙을 어기면 재시도로 다시 받기 위함).
     """
-    if not data:
+    if not data or not isinstance(data, dict):
         return False
     if not data.get("title") or not data.get("lede"):
         return False
     body = data.get("body")
     if not body or not isinstance(body, list):
         return False
-    valid_paragraphs = [b for b in body if isinstance(b, dict) and b.get("p") and len(b["p"].strip()) > 5]
+    valid_paragraphs = [b for b in body if _is_valid_paragraph(b)]
     if expected_paragraphs is not None and len(valid_paragraphs) != expected_paragraphs:
         return False
     if expected_paragraphs is None and len(valid_paragraphs) < 2:
@@ -588,12 +621,12 @@ def _meets_minimum_floor(data, expected_paragraphs, check):
     이전의 '근소 미달 보관 후 채택'(_is_fallback_candidate)은 이 판정에 흡수됐다:
     바닥을 충족하면 보관 없이 바로 채택한다.
     """
-    if not data or not data.get("title") or not data.get("lede"):
+    if not data or not isinstance(data, dict) or not data.get("title") or not data.get("lede"):
         return False
     body = data.get("body")
     if not body or not isinstance(body, list):
         return False
-    valid = [b for b in body if isinstance(b, dict) and b.get("p") and len(b["p"].strip()) > 5]
+    valid = [b for b in body if _is_valid_paragraph(b)]
     if len(valid) != expected_paragraphs:
         return False
     total, avg_sent, max_sent = _body_metrics([b["p"] for b in valid])
@@ -710,6 +743,32 @@ def _validation_failure(data, expected_paragraphs, check):
     return reasons, paragraph_only, feedback
 
 # ==========================================
+# 💡 숫자 사실 검증 (2026-11-26)
+# ==========================================
+_NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+def _numbers_in(text):
+    """텍스트의 숫자 토큰(쉼표 제거, 2자리 이상)을 집합으로."""
+    out = set()
+    for m in _NUM_RE.findall(text or ""):
+        n = m.replace(",", "")
+        if len(n.replace(".", "")) >= 2:
+            out.add(n)
+    return out
+
+def find_unsupported_numbers(data, article_data):
+    """생성 기사의 숫자 중 원문(본문·요약·제목)에 없는 것을 정렬해 돌려준다.
+    원문 근거가 너무 짧으면(100자 미만) 검증하지 않는다."""
+    source_text = " ".join([
+        article_data.get("title", ""), article_data.get("description", ""),
+        article_data.get("content", "")])
+    if len(source_text) < 100:
+        return []
+    out_text = " ".join([data.get("title", ""), data.get("lede", "")]
+                        + [b["p"] for b in data.get("body", []) if _is_valid_paragraph(b)])
+    return sorted(_numbers_in(out_text) - _numbers_in(source_text))
+
+# ==========================================
 # 4. 제미나이(Gemini) AI 기사 '변환' 로직
 # ==========================================
 # 학년별 본문 구성·난이도 기준 (2026-11-15: 3~4학년 3문단, 5~6학년 4문단 + 난이도 차등)
@@ -820,6 +879,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
         attempt_prompt = prompt if last_feedback is None else (
             prompt + f"\n\n[재작성 시 반드시 고칠 점]\n{last_feedback}")
         response = None
+        truncated = False
         try:
             response = call_gemini(
                 attempt_prompt,
@@ -828,6 +888,10 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
                     max_output_tokens=4096  # 응답이 중간에 잘려 본문이 비는 것을 방지
                 )
             )
+            try:
+                truncated = "MAX_TOKENS" in str(response.candidates[0].finish_reason)
+            except Exception:
+                truncated = False
             data = json.loads(response.text)
             data = normalize_article_body(data)
             # 출처는 모델 응답을 믿지 않고 원본 데이터로 직접 주입한다 (URL 변형·JSON 깨짐 방지)
@@ -837,6 +901,18 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             }
 
             if _meets_minimum_floor(data, target_count, spec["check"]):
+                unsupported = find_unsupported_numbers(data, article_data)
+                if unsupported:
+                    print(f"  🔢 원문에 없는 숫자 감지 ({grade_text}, 시도 {attempt}/{cap}): {unsupported[:8]}")
+                    if attempt < max_retries:
+                        only_paragraph_failures = False
+                        last_feedback = ("이전 응답의 문제: 원문에 없는 숫자("
+                                         + ", ".join(unsupported[:5])
+                                         + ")가 있었습니다. 원문에 적힌 숫자만 쓰고, 없는 숫자는 빼세요.")
+                        continue
+                    if len(unsupported) >= 2:
+                        print("  ⛔ 사실 검증 실패(원문에 없는 숫자 2개 이상) — 이 판은 건너뜁니다.")
+                        break
                 if not is_valid_article(data, expected_paragraphs=target_count, level_check=spec["check"]):
                     strict_reasons, _, _ = _validation_failure(data, target_count, spec["check"])
                     print(f"  📥 엄격 기준에는 미달이지만 최소 바닥을 충족해 채택합니다: {'; '.join(strict_reasons)}")
@@ -862,8 +938,12 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
             raise  # 쿼터 초과 시 재시도로 호출을 더 태우지 않고 즉시 중단
         except Exception as e:
             only_paragraph_failures = False
-            last_feedback = ("이전 응답의 문제: JSON 형식이 깨져 읽을 수 없었습니다. "
-                             "지정된 JSON 형식 그대로만 답하세요.")
+            if truncated:
+                last_feedback = ("이전 응답의 문제: 응답이 너무 길어 중간에 잘렸습니다. "
+                                 "각 문단과 낱말 풀이를 더 간결하게 써서 JSON을 끝까지 완성하세요.")
+            else:
+                last_feedback = ("이전 응답의 문제: JSON 형식이 깨져 읽을 수 없었습니다. "
+                                 "지정된 JSON 형식 그대로만 답하세요.")
             print(f"  ⚠️ AI 생성 또는 JSON 파싱 에러 발생 ({grade_text}용, 시도 {attempt}/{cap}): {e}")
             try:
                 finish_reason = response.candidates[0].finish_reason if response else "알 수 없음"
@@ -879,6 +959,7 @@ def rewrite_article_for_kids(article_data, theme_name, grade_text, grade_value, 
 # 5. 메인 실행 파트
 # ==========================================
 def main():
+    init_services()
     print("📰 어린이 헤드라인 뉴스 AI 자동 생성 스크립트 시작...")
     print(f"🧠 사용 모델: {MODEL_CANDIDATES[_model_index]} "
           f"(후보 {len(MODEL_CANDIDATES)}개, 쿼터·모델 오류 시 순서대로 전환)")
